@@ -1,0 +1,1 @@
+We ran differential gene expression, GO and KEGG analysis as well as cell communication analysis, using five brain cells, including endothelial cells, astrocytes, microglia, oligodendrocytes, and neurons. The dataset belong to k18h ACE2 transgenic mice of two groups; one receiving phosphate buffered saline and the other receiving SARS-CoV-2 spike protein subunit 1 
