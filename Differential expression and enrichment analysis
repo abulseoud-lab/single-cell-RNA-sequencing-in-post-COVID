@@ -1,0 +1,2025 @@
+library(Seurat)
+library(SeuratObject)
+library(SeuratData)
+library(ggplot2)
+library(hdf5r)
+library(tidyverse)
+library(gridExtra)
+library(DoubletFinder)
+library(harmony)
+library(pheatmap)
+library(celldex)
+Library(BiocManager)
+
+#Load and read HDF5 file--------------------------------------------------------
+saline1_2weeks <- Read10X_h5(filename = "data", 
+                             use.name = TRUE, 
+                             unique.features = TRUE)
+saline2_2weeks <- Read10X_h5(filename = "data",
+                             use.name = TRUE, 
+                             unique.features = TRUE)
+
+spike1_2weeks <- Read10X_h5(filename = "data", 
+                             use.name = TRUE, 
+                             unique.features = TRUE)
+spike2_2weeks <- Read10X_h5(filename = "data",
+                             use.name = TRUE, 
+                             unique.features = TRUE)
+
+#Create a seurat object---------------------------------------------------------
+Seurat_saline1_2weeks <- CreateSeuratObject(counts = saline1_2weeks)
+Seurat_saline2_2weeks <- CreateSeuratObject(counts = saline2_2weeks)
+Seurat_spike1_2weeks <- CreateSeuratObject(counts = spike1_2weeks)
+Seurat_spike2_2weeks <- CreateSeuratObject(counts = spike2_2weeks)
+
+#add metadata for condition (#assign a condition to each sample)-----
+Seurat_saline1_2weeks$condition <- "Saline_2wk"
+Seurat_spike1_2weeks$condition <- "spike_2wk"
+Seurat_saline2_2weeks$condition <- "Saline_2wk"
+Seurat_spike2_2weeks$condition <- "spike_2wk"
+#view metadata/seurat object-------------
+View(Seurat_saline1_2weeks@meta.data)
+View(Seurat_saline2_2weeks@meta.data)
+View(Seurat_spike1_2weeks@meta.data)
+View(Seurat_spike2_2weeks@meta.data)
+
+#QC-----------------------------------------------------------------------------
+# 1-Filtering----------------------------------------------------------------------
+##MT reads #regress out(mitochondrial, hemoglobin, and transthyretin genes)
+Seurat_saline1_2weeks[["percent.hb"]] <- PercentageFeatureSet(Seurat_saline1_2weeks, pattern = "^hb-")
+Seurat_saline2_2weeks[["percent.hb"]] <- PercentageFeatureSet(Seurat_saline2_2weeks, pattern = "^hb-")
+Seurat_spike1_2weeks[["percent.hb"]] <- PercentageFeatureSet(Seurat_spike1_2weeks, pattern = "^hb-")
+Seurat_spike2_2weeks[["percent.hb"]] <- PercentageFeatureSet(Seurat_spike2_2weeks, pattern = "^hb-")
+
+Seurat_saline1_2weeks[["percent.mt"]] <- PercentageFeatureSet(Seurat_saline1_2weeks, pattern = "^MT-")
+Seurat_saline2_2weeks[["percent.mt"]] <- PercentageFeatureSet(Seurat_saline2_2weeks, pattern = "^MT-")
+Seurat_spike1_2weeks[["percent.mt"]] <- PercentageFeatureSet(Seurat_spike1_2weeks, pattern = "^MT-")
+Seurat_spike2_2weeks[["percent.mt"]] <- PercentageFeatureSet(Seurat_spike2_2weeks, pattern = "^MT-")
+
+Seurat_saline1_2weeks[["percent.ttr"]] <- PercentageFeatureSet(Seurat_saline1_2weeks, pattern = "^ttr-")
+Seurat_saline2_2weeks[["percent.ttr"]] <- PercentageFeatureSet(Seurat_saline2_2weeks, pattern = "^ttr-")
+Seurat_spike1_2weeks[["percent.ttr"]] <- PercentageFeatureSet(Seurat_spike1_2weeks, pattern = "^ttr-")
+Seurat_spike2_2weeks[["percent.ttr"]] <- PercentageFeatureSet(Seurat_spike2_2weeks, pattern = "^ttr-")
+
+
+##Filtering low RNA content, low RNA features----------------------
+Seurat_saline1_2weeks <- subset(Seurat_saline1_2weeks, subset = nFeature_RNA >200 & nFeature_RNA < 5000 &
+                                  percent.mt < 5)
+Seurat_saline2_2weeks <- subset(Seurat_saline2_2weeks, subset = nFeature_RNA >200 & nFeature_RNA < 5000 &
+                                  percent.mt < 5)
+Seurat_spike1_2weeks <- subset(Seurat_spike1_2weeks, subset = nFeature_RNA >200 & nFeature_RNA < 5000 &
+                                 percent.mt < 5)
+Seurat_spike2_2weeks <- subset(Seurat_spike2_2weeks, subset = nFeature_RNA >200 & nFeature_RNA < 5000 &
+                                 percent.mt < 5)
+Seurat_saline1_2weeks <- subset(Seurat_saline1_2weeks, subset = nCount_RNA > 500 & nCount_RNA < 40000)
+Seurat_saline2_2weeks <- subset(Seurat_saline2_2weeks, subset = nCount_RNA > 500 & nCount_RNA < 40000)
+Seurat_spike1_2weeks <- subset(Seurat_spike1_2weeks, subset = nCount_RNA > 500 & nCount_RNA < 40000)
+Seurat_spike2_2weeks <- subset(Seurat_spike2_2weeks, subset = nCount_RNA > 500 & nCount_RNA < 40000)
+
+
+## Save the filtered Seurat object
+saveRDS(Seurat_saline2_2weeks, file = "data/Seurat_saline2_2weeks_filtered.rds")
+saveRDS(Seurat_saline1_2weeks, file = "data/Seurat_saline1_2weeks_filtered.rds")
+saveRDS(Seurat_spike1_2weeks, file = "data/Seurat_spike1_2weeks_filtered.rds")
+saveRDS(Seurat_spike2_2weeks, file = "data/Seurat_spike2_2weeks_filtered.rds")
+##Load the filtered saved object
+filtered_saline2_2wk <- readRDS("data/Seurat_saline2_2weeks_filtered.rds")
+filtered_saline1_2wk <- readRDS("data/Seurat_saline1_2weeks_filtered.rds")
+filtered_spike2_2wk <- readRDS("data/Seurat_spike2_2weeks_filtered.rds")
+filtered_spike1_2wk <- readRDS("data/Seurat_spike1_2weeks_filtered.rds")
+
+# 2-pre-process standard workflow before finding doublets---------------------------
+filtered_saline1_2wk <- NormalizeData(object = filtered_saline1_2wk )
+filtered_saline1_2wk <- FindVariableFeatures(object = filtered_saline1_2wk )
+filtered_saline1_2wk <- ScaleData(object = filtered_saline1_2wk )
+###linear dimentionality reduction
+filtered_saline1_2wk <- RunPCA(object = filtered_saline1_2wk )
+ElbowPlot(filtered_saline1_2wk)
+filtered_saline1_2wk <- FindNeighbors(object = filtered_saline1_2wk, dims = 1:20)
+filtered_saline1_2wk <- FindClusters(object = filtered_saline1_2wk)
+## # understanding resolution
+filtered_saline1_2wk <- FindClusters(filtered_saline1_2wk, resolution = c(0.1, 0.4, 0.5, 0.7, 1))
+View(filtered_saline1_2wk@meta.data)
+DimPlot(filtered_saline1_2wk, group.by = "RNA_snn_res.0.4", label = TRUE)
+# setting identity of clusters
+Idents(filtered_saline1_2wk)
+Idents(filtered_saline1_2wk) <- "RNA_snn_res.0.4"
+Idents(filtered_saline1_2wk)
+###non-linear dimentionality reduction
+filtered_saline1_2wk <- RunUMAP(object = filtered_saline1_2wk, dims = 1:20)
+DimPlot(filtered_saline1_2wk, reduction = "umap")
+##added here only if you want to use them
+print(filtered_saline1_2wk[["pca"]], dims = 1:5, nfeatures = 5)
+DimHeatmap(filtered_saline1_2wk, dims = 1, cells = 500, balanced = TRUE)
+
+
+filtered_saline2_2wk <- NormalizeData(object = filtered_saline2_2wk )
+filtered_saline2_2wk <- FindVariableFeatures(object = filtered_saline2_2wk )
+filtered_saline2_2wk <- ScaleData(object = filtered_saline2_2wk )
+filtered_saline2_2wk <- RunPCA(object = filtered_saline2_2wk )
+ElbowPlot(filtered_saline2_2wk)
+filtered_saline2_2wk <- FindNeighbors(object = filtered_saline2_2wk, dims = 1:20)
+filtered_saline2_2wk <- FindClusters(object = filtered_saline2_2wk)
+## # understanding resolution
+filtered_saline2_2wk <- FindClusters(filtered_saline2_2wk, resolution = c(0.1,0.4, 0.5, 0.7, 1))
+View(filtered_saline2_2wk@meta.data)
+DimPlot(filtered_saline2_2wk, group.by = "RNA_snn_res.0.4", label = TRUE)
+# setting identity of clusters
+Idents(filtered_saline2_2wk)
+Idents(filtered_saline2_2wk) <- "RNA_snn_res.0.4"
+Idents(filtered_saline2_2wk)
+filtered_saline2_2wk <- RunUMAP(object = filtered_saline2_2wk, dims = 1:20)
+DimPlot(filtered_saline2_2wk, reduction = "umap")
+
+filtered_spike1_2wk <- NormalizeData(object = filtered_spike1_2wk )
+filtered_spike1_2wk <- FindVariableFeatures(object = filtered_spike1_2wk )
+filtered_spike1_2wk <- ScaleData(object = filtered_spike1_2wk )
+filtered_spike1_2wk <- RunPCA(object = filtered_spike1_2wk )
+ElbowPlot(filtered_spike1_2wk)
+filtered_spike1_2wk <- FindNeighbors(object = filtered_spike1_2wk, dims = 1:20)
+filtered_spike1_2wk <- FindClusters(object = filtered_spike1_2wk)
+## # understanding resolution
+filtered_spike1_2wk <- FindClusters(filtered_spike1_2wk, resolution = c(0.1,0.4, 0.5, 0.7, 1))
+View(filtered_spike1_2wk@meta.data)
+DimPlot(filtered_spike1_2wk, group.by = "RNA_snn_res.0.4", label = TRUE)
+# setting identity of clusters
+Idents(filtered_spike1_2wk)
+Idents(filtered_spike1_2wk) <- "RNA_snn_res.0.4"
+Idents(filtered_spike1_2wk)
+filtered_spike1_2wk <- RunUMAP(object = filtered_spike1_2wk, dims = 1:20)
+DimPlot(filtered_spike1_2wk, reduction = "umap")
+
+filtered_spike2_2wk <- NormalizeData(object = filtered_spike2_2wk)
+filtered_spike2_2wk <- FindVariableFeatures(object = filtered_spike2_2wk )
+filtered_spike2_2wk <- ScaleData(object = filtered_spike2_2wk )
+filtered_spike2_2wk <- RunPCA(object = filtered_spike2_2wk )
+ElbowPlot(filtered_spike2_2wk)
+filtered_spike2_2wk <- FindNeighbors(object = filtered_spike2_2wk, dims = 1:20)
+filtered_spike2_2wk <- FindClusters(object = filtered_spike2_2wk)
+## # understanding resolution
+filtered_spike2_2wk <- FindClusters(filtered_spike2_2wk, resolution = c(0.1,0.4, 0.5, 0.7, 1))
+View(filtered_spike2_2wk@meta.data)
+DimPlot(filtered_spike2_2wk, group.by = "RNA_snn_res.0.4", label = TRUE)
+# setting identity of clusters
+Idents(filtered_spike2_2wk)
+Idents(filtered_spike2_2wk) <- "RNA_snn_res.0.4"
+Idents(filtered_spike2_2wk)
+filtered_spike2_2wk <- RunUMAP(object = filtered_spike2_2wk, dims = 1:20)
+DimPlot(filtered_spike2_2wk, reduction = "umap")
+
+
+## Save the pre-processed Seurat object
+saveRDS(filtered_saline2_2wk, file = "data/Seurat_saline2_2weeks_processed.rds")
+saveRDS(filtered_saline1_2wk, file = "data/Seurat_saline1_2weeks_processed.rds")
+saveRDS(filtered_spike1_2wk, file = "data/Seurat_spike1_2weeks_processed.rds")
+saveRDS(filtered_spike2_2wk, file = "data/Seurat_spike2_2weeks_processed.rds")
+##Load the pre-processed saved object
+processed_saline2_2wk <- readRDS("data/Seurat_saline2_2weeks_processed.rds")
+processed_saline1_2wk <- readRDS("data/Seurat_saline1_2weeks_processed.rds")
+processed_spike2_2wk <- readRDS("data/Seurat_spike2_2weeks_processed.rds")
+processed_spike1_2wk <- readRDS("data/Seurat_spike1_2weeks_processed.rds")
+
+# 3-Doublet finding----
+## pK Identification (no ground-truth) ---------------------------------------------------------------------------------------
+sweep.res.list_sl1w2 <- paramSweep(processed_saline1_2wk, PCs = 1:20, sct = FALSE)
+sweep.stats_sl1w2 <- summarizeSweep(sweep.res.list_sl1w2, GT = FALSE)
+bcmvn_sl1w2 <- find.pK(sweep.stats_sl1w2)
+ggplot(bcmvn_sl1w2, aes(pK, BCmetric, group = 1)) +
+  geom_point() +
+  geom_line()
+
+sweep.res.list_sl2w2 <- paramSweep(processed_saline2_2wk, PCs = 1:20, sct = FALSE)
+sweep.stats_sl2w2 <- summarizeSweep(sweep.res.list_sl2w2, GT = FALSE)
+bcmvn_sl2w2 <- find.pK(sweep.stats_sl2w2)
+ggplot(bcmvn_sl2w2, aes(pK, BCmetric, group = 1)) +
+  geom_point() +
+  geom_line()
+
+sweep.res.list_sp1w2 <- paramSweep(processed_spike1_2wk, PCs = 1:20, sct = FALSE)
+sweep.stats_sp1w2 <- summarizeSweep(sweep.res.list_sp1w2, GT = FALSE)
+bcmvn_sp1w2 <- find.pK(sweep.stats_sp1w2)
+ggplot(bcmvn_sp1w2, aes(pK, BCmetric, group = 1)) +
+  geom_point() +
+  geom_line()
+
+sweep.res.list_sp2w2 <- paramSweep(processed_spike2_2wk, PCs = 1:20, sct = FALSE)
+sweep.stats_sp2w2 <- summarizeSweep(sweep.res.list_sp2w2, GT = FALSE)
+bcmvn_sp2w2 <- find.pK(sweep.stats_sp2w2)
+ggplot(bcmvn_sp2w2, aes(pK, BCmetric, group = 1)) +
+  geom_point() +
+  geom_line()
+
+###select the pK that corresponds to max bcmvn to optimize doublet detection
+pK_sl1w2 <- 0.29
+pK_sl2w2 <- 0.24
+pK_sp1w2 <- 0.29
+pK_sp2w2 <- 0.21
+
+## Homotypic Doublet Proportion Estimate -------------------------------------------------------------------------------------
+annotations_sl1w2 <- processed_saline1_2wk@meta.data$seurat_clusters
+homotypic.prop_sl1w2 <- modelHomotypic(annotations_sl1w2)           ## ex: annotations <- seu_kidney@meta.data$ClusteringResults
+nExp_poi_sl1w2 <- round(0.08*nrow(processed_saline1_2wk@meta.data))  ## Assuming 8% doublet formation rate - tailor for your dataset
+nExp_poi.adj_sl1w2 <- round(nExp_poi_sl1w2*(1-homotypic.prop_sl1w2))
+
+annotations_sl2w2 <- processed_saline2_2wk@meta.data$seurat_clusters
+homotypic.prop_sl2w2 <- modelHomotypic(annotations_sl2w2)           ## ex: annotations <- seu_kidney@meta.data$ClusteringResults
+nExp_poi_sl2w2 <- round(0.08*nrow(processed_saline2_2wk@meta.data))  ## Assuming 8% doublet formation rate - tailor for your dataset
+nExp_poi.adj_sl2w2 <- round(nExp_poi_sl2w2*(1-homotypic.prop_sl2w2))
+
+annotations_sp1w2 <- processed_spike1_2wk@meta.data$seurat_clusters
+homotypic.prop_sp1w2 <- modelHomotypic(annotations_sp1w2)           ## ex: annotations <- seu_kidney@meta.data$ClusteringResults
+nExp_poi_sp1w2 <- round(0.08*nrow(processed_spike1_2wk@meta.data))  ## Assuming 8% doublet formation rate - tailor for your dataset
+nExp_poi.adj_sp1w2 <- round(nExp_poi_sp1w2*(1-homotypic.prop_sp1w2))
+
+annotations_sp2w2 <- processed_spike2_2wk@meta.data$seurat_clusters
+homotypic.prop_sp2w2 <- modelHomotypic(annotations_sp2w2)           ## ex: annotations <- seu_kidney@meta.data$ClusteringResults
+nExp_poi_sp2w2 <- round(0.08*nrow(processed_spike2_2wk@meta.data))  ## Assuming 8% doublet formation rate - tailor for your dataset
+nExp_poi.adj_sp2w2 <- round(nExp_poi_sp2w2*(1-homotypic.prop_sp2w2))
+
+## run doubletFinder------- 
+processed_saline1_2wk <- doubletFinder(processed_saline1_2wk, 
+                                       PCs = 1:20, 
+                                       pN = 0.25, 
+                                       pK = pK_sl1w2, 
+                                       nExp = nExp_poi.adj_sl1w2,
+                                       reuse.pANN = FALSE, sct = FALSE)
+
+
+processed_saline2_2wk <- doubletFinder(processed_saline2_2wk, 
+                                       PCs = 1:20, 
+                                       pN = 0.25, 
+                                       pK = pK_sl2w2, 
+                                       nExp = nExp_poi.adj_sl2w2,
+                                       reuse.pANN = FALSE, sct = FALSE)
+
+processed_spike1_2wk <- doubletFinder(processed_spike1_2wk, 
+                                      PCs = 1:20, 
+                                      pN = 0.25, 
+                                      pK = pK_sp1w2, 
+                                      nExp = nExp_poi.adj_sp1w2,
+                                      reuse.pANN = FALSE, sct = FALSE)
+processed_spike2_2wk <- doubletFinder(processed_spike2_2wk, 
+                                      PCs = 1:20, 
+                                      pN = 0.25, 
+                                      pK = pK_sp2w2, 
+                                      nExp = nExp_poi.adj_sp2w2,
+                                      reuse.pANN = FALSE, sct = FALSE)
+
+
+View(processed_saline1_2wk@meta.data)
+View(processed_saline2_2wk@meta.data)
+View(processed_spike1_2wk@meta.data)
+View(processed_spike2_2wk@meta.data)
+
+## visualize doublets
+DimPlot(processed_saline1_2wk, reduction = 'umap', group.by = "DF.classifications_0.25_0.29_2179")
+DimPlot(processed_saline2_2wk, reduction = 'umap', group.by = "DF.classifications_0.25_0.24_1967")
+DimPlot(processed_spike1_2wk, reduction = 'umap', group.by = "DF.classifications_0.25_0.29_1921")
+DimPlot(processed_spike2_2wk, reduction = 'umap', group.by = "DF.classifications_0.25_0.21_2192")
+
+# number of singlets and doublets
+table(processed_saline1_2wk@meta.data$DF.classifications_0.25_0.29_2179)
+table(processed_saline2_2wk@meta.data$DF.classifications_0.25_0.24_1967)
+table(processed_spike1_2wk@meta.data$DF.classifications_0.25_0.29_1921)
+table(processed_spike2_2wk@meta.data$DF.classifications_0.25_0.21_2192)
+
+##check number of cells before filtering doublets-----
+ncol(processed_saline1_2wk)
+ncol(processed_saline2_2wk)
+ncol(processed_spike1_2wk)
+ncol(processed_spike2_2wk)
+
+##Filtering doublets----
+processed_saline1_2wk <- subset(processed_saline1_2wk, subset = DF.classifications_0.25_0.29_2179 == "Singlet")
+ncol(processed_saline1_2wk)
+
+processed_saline2_2wk <- subset(processed_saline2_2wk, subset = DF.classifications_0.25_0.24_1967 == "Singlet")
+ncol(processed_saline2_2wk)
+
+processed_spike1_2wk <- subset(processed_spike1_2wk, subset = DF.classifications_0.25_0.29_1921 == "Singlet")
+ncol(processed_spike1_2wk)
+
+
+processed_spike2_2wk <- subset(processed_spike2_2wk, subset = DF.classifications_0.25_0.21_2192 == "Singlet")
+ncol(processed_spike2_2wk)
+
+## Save doublet filtered
+saveRDS(processed_saline1_2wk, file = "data/saline1_2weeks_doublet.rds")
+saveRDS(processed_saline2_2wk, file = "data/saline2_2weeks_doublet.rds")
+saveRDS(processed_spike1_2wk, file = "data/spike1_2weeks_doublet.rds")
+saveRDS(processed_spike2_2wk, file = "data/spike2_2weeks_doublet.rds")
+
+##Load doublet filtered
+saline2_2weeks_doublet <- readRDS("data/saline2_2weeks_doublet.rds")
+saline1_2weeks_doublet <- readRDS("data/saline1_2weeks_doublet.rds")
+spike2_2weeks_doublet <- readRDS("data/spike2_2weeks_doublet.rds")
+spike1_2weeks_doublet <- readRDS("data/spike1_2weeks_doublet.rds")
+
+#add metadata for condition for 2 wks (#assign a condition to each sample)-----
+saline1_2weeks_doublet$condition <- "Saline_2wk"
+spike1_2weeks_doublet$condition <- "spike_2wk"
+saline2_2weeks_doublet$condition <- "Saline_2wk"
+spike2_2weeks_doublet$condition <- "spike_2wk"
+
+View(saline1_2weeks_doublet@meta.data)
+View(saline2_2weeks_doublet@meta.data)
+View(spike1_2weeks_doublet@meta.data)
+View(spike2_2weeks_doublet@meta.data)
+
+
+# 4- merging seurat objects
+merged_seurat_2wk <- merge(saline2_2weeks_doublet, y = c(saline1_2weeks_doublet, spike2_2weeks_doublet, spike1_2weeks_doublet),
+                       add.cell.ids = c("saline2_2wk", "saline1_2wk", "spike2_2wk", "spike1_2wk"))
+## Save merged
+saveRDS(merged_seurat_2wk, file = "data/merged_seurat_2wk.rds")
+
+##Load merged
+merged_seurat_2wk <- readRDS("data/merged_seurat_2wk.rds")
+
+# QC & filtering -----------------------
+View(merged_seurat_2wk@meta.data)
+# create a sample column
+merged_seurat_2wk$sample <- rownames(merged_seurat_2wk@meta.data)
+View(merged_seurat_2wk@meta.data)
+# split sample column
+merged_seurat_2wk@meta.data <- separate(merged_seurat_2wk@meta.data, col = 'sample', into = c('subject','time_point','Barcode'), 
+                                    sep = '_')
+View(merged_seurat_2wk@meta.data)
+
+# calculate mitochondrial percentage
+merged_seurat_2wk$mitoPercent <- PercentageFeatureSet(merged_seurat_2wk, pattern='^MT-')
+
+# filtering
+merged_seurat_2wk <- subset(merged_seurat_2wk, subset = nFeature_RNA >200 & nFeature_RNA < 5000 &
+                                   percent.mt < 5)
+merged_seurat_2wk <- subset(merged_seurat_2wk, subset = nCount_RNA > 500 & nCount_RNA < 40000)
+
+
+# perform standard workflow steps to figure out if we see any batch effects --------
+merged_seurat_2wk <- NormalizeData(object = merged_seurat_2wk)
+merged_seurat_2wk <- FindVariableFeatures(object = merged_seurat_2wk)
+merged_seurat_2wk <- ScaleData(object = merged_seurat_2wk)
+merged_seurat_2wk <- RunPCA(object = merged_seurat_2wk)
+ElbowPlot(merged_seurat_2wk)
+merged_seurat_2wk <- FindNeighbors(object = merged_seurat_2wk, dims = 1:20)
+merged_seurat_2wk <- FindClusters(object = merged_seurat_2wk, resolution = 0.4)
+merged_seurat_2wk <- RunUMAP(object = merged_seurat_2wk, dims = 1:20)
+
+View(merged_seurat_2wk@meta.data)
+table(merged_seurat_2wk$condition)
+
+
+# plot
+p1_2wk <- DimPlot(merged_seurat_2wk, reduction = 'umap', group.by = 'subject', 
+                           raster=FALSE)
+p2_2wk <- DimPlot(merged_seurat_2wk, reduction = 'umap', group.by = 'condition',
+              raster=FALSE)
+p2_dash_2wk <- DimPlot(merged_seurat_2wk, reduction = 'umap', group.by = 'seurat_clusters',
+                  raster=FALSE)
+
+grid.arrange(p2_2wk, p2_dash_2wk, ncol = 2, nrow = 2)
+
+p1_2wk <- DimPlot(merged_seurat_2wk, reduction = 'umap', group.by = 'subject', 
+                  cols = c('red','green','blue','purple'), 
+                  raster=FALSE)
+
+
+# 5- Harmony integration
+
+library(harmony)
+library(Seurat)
+library(SeuratData)
+library(tidyverse)
+library(ggplot2)
+
+
+# run Harmony -----------
+harmony_2wk <- merged_seurat_2wk %>%
+  RunHarmony(group.by.vars = 'condition', plot_convergence = FALSE)
+
+##next 3 are just check
+
+harmony_2wk@reductions
+
+harmony_2wk.embed <- Embeddings(harmony_2wk, "harmony")
+harmony_2wk.embed[1:10,1:10]
+
+# Do UMAP and clustering using ** Harmony embeddings instead of PCA **
+harmony_2wk <- harmony_2wk %>%
+  RunUMAP(reduction = 'harmony', dims = 1:20) %>%
+  FindNeighbors(reduction = "harmony", dims = 1:20) %>%
+  FindClusters(resolution = 0.4)
+
+# visualize 
+after <- DimPlot(harmony_2wk, reduction = 'umap', group.by = 'condition', 
+                 raster=FALSE)
+
+p2_2wk|after
+
+## Save harmony-integrated
+saveRDS(harmony_2wk, file = "data/harmony_2wk.rds")
+
+##Load harmony-integrated
+harmony_2wk <- readRDS("data/harmony_2wk.rds")
+
+# 8-Initial Automatic annotation with single R------
+
+library(SingleR)
+library(celldex)
+library(Seurat)
+library(tidyverse)
+library(pheatmap)
+
+
+## running steps above to get clusters----
+View(harmony_2wk@meta.data)
+DimPlot(harmony_2wk, reduction = 'umap')
+
+##get reference data -----------
+ref_2wk <- celldex::MouseRNAseqData()
+View(as.data.frame(colData(ref_2wk)))
+
+# run SingleR (default mode) ---------
+# default for SingleR is to perform annotation of each individual cell in the test dataset
+
+annotation_2wk_counts <- GetAssayData(harmony_singleR_2wk, layer = 'counts')
+
+pred_2wk <- SingleR(test = annotation_2wk_counts,
+                ref = filtered_ref,
+                labels = filtered_ref$label.main)
+pred_2wk
+
+harmony_2wk$singleR.labels <- pred_2wk$labels[match(rownames(harmony_2wk@meta.data), rownames(pred_2wk))]
+DimPlot(harmony_singleR_2wk, reduction = 'umap', group.by = 'singleR.labels')
+
+# Annotation diagnostics ----------
+
+# ...Based on the scores within cells -----------
+pred_2wk
+pred_2wk$scores
+
+plotScoreHeatmap(pred_2wk)
+
+# ...Based on deltas across cells ----------
+
+plotDeltaDistribution(pred_2wk)
+
+# ...Comparing to unsupervised clustering ------------
+
+tab_2wk <- table(Assigned=pred_2wk$labels, Clusters=harmony_2wk$seurat_clusters)
+pheatmap(log10(tab_2wk+10), color = colorRampPalette(c('white','blue'))(10))
+
+## Save harmony-singleRannotated
+saveRDS(harmony_2wk, file = "data/harmony_singleR_2wk.rds")
+
+#proportional analysis-----
+
+# Combine the condition and cell type annotations into a data frame
+cell_annotations <- data.frame(
+  CellType = pred_2wk$labels,         
+  Condition = harmony_singleR_2wk$condition
+)
+
+#dotplot for markers---------------
+singlr_harmony <- readRDS("data\\harmony_singleR_2wk.rds")
+Idents(singlr_harmony) <- "singleR.labels"
+DefaultAssay(singlr_harmony) <- "RNA"
+# Generate the DotPlot
+dotplot <- DotPlot(
+     object = singlr_harmony,
+     features = c("Clu", "Gfap", "Aqp4", "Slc1a3", "Hexb", "C1qa", "Plp1", "Mbp", "Mag", "Mog", "Ugta8","Gad1", "Gad2", "Snap25", "Syt1", "Sox17", "Fn1", "Igfbp7", "Tek", "Cldn5", "Pecam1"),
+     idents = c("Endothelial cells", "Neurons", "Microglia", "Astrocytes", "Oligodendrocytes"),
+     dot.scale = 6,
+     cols = c("white", "red3")
+   ) + RotatedAxis() + theme_bw()
+print(dotplot)
+ggsave("dotplot.png", plot = dotplot, width = 11, height = 3)
+ggsave("dotplot.png", plot = dotplot, width = 11, height = 2)
+
+Idents(singlr_harmony) <- "seurat_clusters"
+dotplot2 <- DotPlot(
+  object = singlr_harmony,
+  features = c("Clu", "Gfap", "Aqp4", "Slc1a3", "Hexb", "C1qa", "Plp1", "Mbp", "Mag", "Mog", "Ugta8","Gad1", "Gad2", "Snap25", "Syt1", "Sox17", "Fn1", "Igfbp7", "Tek", "Cldn5", "Pecam1"),
+  dot.scale = 6,
+  cols = c("white", "red3")
+) + RotatedAxis() + theme_bw()
+print(dotplot)
+ggsave("dotplot.png", plot = dotplot, width = 11, height = 3)
+ggsave("dotplot.png", plot = dotplot, width = 11, height = 2)
+
+# 7-manual annotation ---------
+harmony_2wk <- readRDS("data\\harmony_annotated_2wk.rds")
+harmony_singleR_2wk <- readRDS("data\\harmony_singleR_2wk.rds")
+harmony_2wk$celltype_manual.cnd <- paste(harmony_2wk$cell_type, harmony_2wk$condition, sep = "_")
+
+##Neuron
+### Visualize expression of marker genes using FeaturePlot
+
+FeaturePlot(harmony_2wk, features = c("Snap25", "Syt1", "Gad1", "Gad2"), min.cutoff = "q10", max.cutoff = "q90", ncol = 4)
+
+# Identify cell based on marker gene expression
+neuron_manual <- WhichCells(harmony_2wk, expression =  Syt1 > 1 & Gad1 > 1 & Gad2 > 1 & Snap25 > 1)
+# Initialize the cell_type column if not already present
+harmony_2wk$cell_type <- "Other"
+View(harmony_2wk@meta.data)
+# Annotate identified cells
+harmony_2wk$cell_type[neuron_manual] <- "neuron"
+View(harmony_2wk@meta.data)
+# Plot UMAP colored by manually assigned cell types
+DimPlot(harmony_2wk, group.by = "cell_type", label = TRUE, repel = TRUE, raster = FALSE) +
+  ggtitle("neuron Annotation Based on Syt1 and Gad1 and Gad2 and Snap25")
+# Calculate the percentage of cell in the dataset
+percent_neuron <- length(neuron_manual) / ncol(harmony_2wk) * 100
+print(paste("Percentage of neuron: ", round(percent_neuron, 2), "%", sep = ""))
+
+# Identify cell based on marker gene expression
+microglia_manual <- WhichCells(harmony_2wk, expression =  Hexb > 1 & C1qa > 1)
+# Initialize the cell_type column if not already present
+harmony_2wk$cell_type <- "Other"
+View(harmony_2wk@meta.data)
+# Annotate identified cells
+harmony_2wk$cell_type[microglia_manual] <- "microglia"
+View(harmony_2wk@meta.data)
+# Plot UMAP colored by manually assigned cell types
+DimPlot(harmony_2wk, group.by = "cell_type", label = TRUE, repel = TRUE, raster = FALSE) +
+  ggtitle("microglia Annotation Based on Hexb and C1qa")
+# Calculate the percentage of cell in the dataset
+percent_microglia <- length(microglia_manual) / ncol(harmony_2wk) * 100
+print(paste("Percentage of microglia: ", round(percent_microglia, 2), "%", sep = ""))
+# Load dplyr for easier data manipulation
+library(dplyr)
+
+# Group cells by condition and cell type, then summarize counts
+percent_microglia_by_condition <- harmony_2wk@meta.data %>%
+  group_by(condition, cell_type) %>%
+  summarise(count = n()) %>%
+  group_by(condition) %>%
+  mutate(percent = (count / sum(count)) * 100) %>%
+  filter(cell_type == "microglia")  
+
+# View the percentages
+print(percent_microglia_by_condition)
+library(ggplot2)
+
+## oligodendrocytes
+### Visualize expression of marker genes using FeaturePlot
+
+FeaturePlot(harmony_2wk, features = c("Plp1", "Mbp","Mag", "Mog", "Ugt8a"), min.cutoff = "q10", max.cutoff = "q90", ncol = 3)
+
+# Identify cell based on marker gene expression
+oligodendrocyte_manual <- WhichCells(harmony_2wk, expression =  Plp1 > 1 & Mbp > 1 & Mag > 1 & Mog > 1 & Ugt8a > 1)
+# Initialize the cell_type column if not already present
+harmony_2wk$cell_type <- "Other"
+View(harmony_2wk@meta.data)
+# Annotate identified cells
+harmony_2wk$cell_type[oligodendrocyte_manual] <- "oligodendrocyte"
+View(harmony_2wk@meta.data)
+# Plot UMAP colored by manually assigned cell types
+DimPlot(harmony_2wk, group.by = "cell_type", label = TRUE, repel = TRUE, raster = FALSE) +
+  ggtitle("oligodendrocyte Annotation Based on Plp1 and Mbp and Mag and Mog")
+# Calculate the percentage of cell in the dataset
+percent_oligodendrocyte <- length(oligodendrocyte) / ncol(harmony_2wk) * 100
+print(paste("Percentage of oligodendrocyte: ", round(percent_oligodendrocyte, 2), "%", sep = ""))
+# Load dplyr for easier data manipulation
+library(dplyr)
+
+# Group cells by condition and cell type, then summarize counts
+percent_oligodendrocyte_by_condition <- harmony_2wk@meta.data %>%
+  group_by(condition, cell_type) %>%
+  summarise(count = n()) %>%
+  group_by(condition) %>%
+  mutate(percent = (count / sum(count)) * 100) %>%
+  filter(cell_type == "oligodendrocyte")  
+
+# View the percentages
+print(percent_oligodendrocyte_by_condition)
+library(ggplot2)
+
+## astrocytes
+### Visualize expression of marker genes using FeaturePlot
+
+FeaturePlot(harmony_2wk, features = c("Clu", "Gfap", "Aqp4", "Slc1a3"), min.cutoff = "q10", max.cutoff = "q90", ncol = 3)
+
+# Identify cell based on marker gene expression
+astrocyte_manual <- WhichCells(harmony_2wk, expression =  Aqp4 > 1 & Clu > 1 & Gfap > 1 & Slc1a3 > 1)
+# Initialize the cell_type column if not already present
+harmony_2wk$cell_type <- "Other"
+View(harmony_2wk@meta.data)
+# Annotate identified cells
+harmony_2wk$cell_type[astrocyte_manual] <- "astrocyte"
+View(harmony_2wk@meta.data)
+# Plot UMAP colored by manually assigned cell types
+DimPlot(harmony_2wk, group.by = "cell_type", label = TRUE, repel = TRUE, raster = FALSE) +
+  ggtitle("astrocyte Annotation Based on Aqp4 and Gfap and Clu")
+# Calculate the percentage of cell in the dataset
+percent_astrocyte <- length(astrocyte) / ncol(harmony_2wk) * 100
+print(paste("Percentage of astrocyte: ", round(percent_astrocyte, 2), "%", sep = ""))
+# Load dplyr for easier data manipulation
+library(dplyr)
+
+# Group cells by condition and cell type, then summarize counts
+percent_astrocyte_by_condition <- harmony_2wk@meta.data %>%
+  group_by(condition, cell_type) %>%
+  summarise(count = n()) %>%
+  group_by(condition) %>%
+  mutate(percent = (count / sum(count)) * 100) %>%
+  filter(cell_type == "astrocyte")  
+
+# View the percentages
+print(percent_astrocyte_by_condition)
+library(ggplot2)
+
+## endothelial cells
+### Visualize expression of marker genes using FeaturePlot
+
+FeaturePlot(harmony_2wk, features = c("Igfbp7", "Fn1", "Sox17", "Pecam1", "Cldn5", "Tek"), min.cutoff = "q10", max.cutoff = "q90", ncol = 4)
+
+# Identify cell based on marker gene expression
+EC <- WhichCells(harmony_2wk, expression =  Igfbp7 > 1 & Fn1 > 1 & Sox17 > 1 & Pecam1 > 1 & Cldn5 > 1 & Tek > 1)
+# Initialize the cell_type column if not already present
+harmony_2wk$cell_type <- "Other"
+View(harmony_2wk@meta.data)
+# Annotate identified cells
+harmony_2wk$cell_type[EC] <- "EC"
+View(harmony_2wk@meta.data)
+# Plot UMAP colored by manually assigned cell types
+DimPlot(harmony_2wk, group.by = "cell_type", label = TRUE, repel = TRUE, raster = FALSE) +
+  ggtitle("EC Annotation Based on Igfbp7 and Fn1 and Sox17 and Pecam1 and Cldn5 and Tek")
+# Calculate the percentage of cell in the dataset
+percent_EC <- length(EC) / ncol(harmony_2wk) * 100
+print(paste("Percentage of EC: ", round(percent_EC, 2), "%", sep = ""))
+# Load dplyr for easier data manipulation
+library(dplyr)
+
+# Group cells by condition and cell type, then summarize counts
+percent_EC_by_condition <- harmony_2wk@meta.data %>%
+  group_by(condition, cell_type) %>%
+  summarise(count = n()) %>%
+  group_by(condition) %>%
+  mutate(percent = (count / sum(count)) * 100) %>%
+  filter(cell_type == "EC")  
+
+# View the percentages
+print(percent_EC_by_condition)
+library(ggplot2)
+
+# DGE for manually annotated cells-----
+
+harmony_2wk$celltype.cnd_manual <- paste0(harmony_2wk$cell_type,'_', harmony_2wk$condition)
+View(harmony_2wk@meta.data)
+Idents(harmony_2wk) <- harmony_2wk$celltype.cnd_manual
+
+DimPlot(harmony_2wk, reduction = 'umap', label = TRUE)
+# find markers
+##The default behavior of FindMarkers() is to compute logFC relative to ident.2.
+library(devtools)
+devtools::install_github('immunogenomics/presto')
+### Endothelail cells
+endothelial_cells_manual <- FindMarkers(harmony_2wk, ident.1 = 'EC_spike_2wk', ident.2 = 'EC_Saline_2wk')
+
+head(endothelial_cells_manual)
+
+write.csv(endothelial_cells_manual, file = "data/endothelial_cells_manual.csv") 
+
+Filtered_DE_EC_manual <- endothelial_cells_manual[
+  endothelial_cells_manual$p_val_adj < 0.05 & 
+    abs(endothelial_cells_manual$avg_log2FC) >= 0.25 & 
+    abs(endothelial_cells_manual$pct.1) >= 0.1 & 
+    abs(endothelial_cells_manual$pct.2) >= 0.1, ]
+write.csv(Filtered_DE_EC_manual, file = "data/Filtered_DE_EC_manual.csv") 
+
+### Microglia
+microglia_manual_DE <- FindMarkers(harmony_2wk, ident.1 = 'microglia_spike_2wk', ident.2 = 'microglia_Saline_2wk')
+
+head(microglia_manual_DE)
+
+write.csv(microglia_manual_DE, file = "data/microglia_manual_DE.csv") 
+
+Filtered_DE_microglia_manual <- microglia_manual_DE[
+  microglia_manual_DE$p_val_adj < 0.05 & 
+    abs(microglia_manual_DE$avg_log2FC) >= 0.25 & 
+    abs(microglia_manual_DE$pct.1) >= 0.1 & 
+    abs(microglia_manual_DE$pct.2) >= 0.1, ]
+write.csv(Filtered_DE_microglia_manual, file = "data/Filtered_DE_microglia_manual.csv") 
+
+#oligodendrocyte
+oligodendrocyte_manual_DE <- FindMarkers(harmony_2wk, ident.1 = 'oligodendrocyte_spike_2wk', ident.2 = 'oligodendrocyte_Saline_2wk')
+
+head(oligodendrocyte_manual_DE)
+
+write.csv(oligodendrocyte_manual_DE, file = "data/oligodendrocyte_manual_DE.csv") 
+
+
+Filtered_DE_oligodendrocyte_manual <- oligodendrocyte_manual_DE[
+  oligodendrocyte_manual_DE$p_val_adj < 0.05 & 
+    abs(oligodendrocyte_manual_DE$avg_log2FC) >= 0.25 & 
+    abs(oligodendrocyte_manual_DE$pct.1) >= 0.1 & 
+    abs(oligodendrocyte_manual_DE$pct.2) >= 0.1, ]
+write.csv(Filtered_DE_oligodendrocyte_manual, file = "data/Filtered_DE_oligodendrocyte_manual.csv") 
+
+#astrocyte
+astrocyte_manual_DE <- FindMarkers(harmony_2wk, ident.1 = 'astrocyte_spike_2wk', ident.2 = 'astrocyte_Saline_2wk')
+
+head(astrocyte_manual_DE)
+
+write.csv(astrocyte_manual_DE, file = "data/astrocyte_manual_DE.csv") 
+
+
+Filtered_DE_astrocyte_manual <- astrocyte_manual_DE[
+  astrocyte_manual_DE$p_val_adj < 0.05 & 
+    abs(astrocyte_manual_DE$avg_log2FC) >= 0.25 & 
+    abs(astrocyte_manual_DE$pct.1) >= 0.1 & 
+    abs(astrocyte_manual_DE$pct.2) >= 0.1, ]
+write.csv(Filtered_DE_astrocyte_manual, file = "data/Filtered_DE_astrocyte_manual.csv") 
+
+
+## Save harmony-annotated
+saveRDS(harmony_2wk, file = "data/harmony_annotated_2wk.rds")
+
+##violin plots  stacked-----
+genes <- c(
+  "Syt1", "Gad1", "Gad2", "Snap25",
+  "Hexb", "C1qa",
+  "Plp1", "Mbp", "Mag", "Mog", "Ugt8a",
+  "Clu", "Gfap", "Aqp4", "Slc1a3",
+  "Fn1", "Sox17", "Tek", "Pecam1", "Igfbp7", "Cldn5"
+)
+
+VlnPlot(
+  harmony_2wk,
+  features = genes,
+  group.by = "seurat_clusters",
+  pt.size = 0,
+  stack = TRUE,
+  flip = TRUE
+)
+
+#GO and KEGG analysis-------
+library(Seurat)
+library(SeuratObject)
+library(SeuratData)
+library(ggplot2)
+library(hdf5r)
+library(tidyverse)
+library(gridExtra)
+library(DoubletFinder)
+library(harmony)
+library(pheatmap)
+library(celldex)
+library(SingleR)
+library(pheatmap)
+library(Matrix)
+library(proxyC)
+library(clusterProfiler)
+library(org.Mm.eg.db)   # Mouse gene annotation database
+library(enrichplot)      # Visualization of enrichment results
+library(ggplot2)         # For additional visualization
+choose.dir()
+
+#microglia--------------------------
+# Load CSV file
+microglia_2wk_up <- read.csv("data\\Filtered_DE_microglia_manual-up.csv", stringsAsFactors = FALSE)
+microglia_2wk_down <- read.csv("data\\Filtered_DE_microglia_manual-down.csv", stringsAsFactors = FALSE)
+
+#perfom GO---
+#2weeks---------------------------
+GO_microglia_2wk_BP_up <- enrichGO(gene = microglia_2wk_up$ENTREZID, 
+                               OrgDb = org.Mm.eg.db, 
+                               keyType = "ENTREZID",
+                               ont = "BP",   # Options: "BP" (Biological Process), "MF" (Molecular Function), "CC" (Cellular Component)
+                               pAdjustMethod = "BH",
+                               qvalueCutoff = 0.05,
+                               readable = TRUE) # Convert IDs back to gene symbols
+GO_microglia_2wk_MF_up <- enrichGO(gene = microglia_2wk_up$ENTREZID, 
+                               OrgDb = org.Mm.eg.db, 
+                               keyType = "ENTREZID",
+                               ont = "MF",   # Options: "BP" (Biological Process), "MF" (Molecular Function), "CC" (Cellular Component)
+                               pAdjustMethod = "BH",
+                               qvalueCutoff = 0.05,
+                               readable = TRUE) # Convert IDs back to gene symbols
+GO_microglia_2wk_CC_up <- enrichGO(gene = microglia_2wk_up$ENTREZID, 
+                               OrgDb = org.Mm.eg.db, 
+                               keyType = "ENTREZID",
+                               ont = "CC",   # Options: "BP" (Biological Process), "MF" (Molecular Function), "CC" (Cellular Component)
+                               pAdjustMethod = "BH",
+                               qvalueCutoff = 0.05,
+                               readable = TRUE) # Convert IDs back to gene symbols
+GO_microglia_2wk_BP_down <- enrichGO(gene = microglia_2wk_down$ENTREZID, 
+                       OrgDb = org.Mm.eg.db, 
+                       keyType = "ENTREZID",
+                       ont = "BP",   # Options: "BP" (Biological Process), "MF" (Molecular Function), "CC" (Cellular Component)
+                       pAdjustMethod = "BH",
+                       qvalueCutoff = 0.05,
+                       readable = TRUE) # Convert IDs back to gene symbols
+GO_microglia_2wk_MF_down <- enrichGO(gene = microglia_2wk_down$ENTREZID, 
+                              OrgDb = org.Mm.eg.db, 
+                              keyType = "ENTREZID",
+                              ont = "MF",   # Options: "BP" (Biological Process), "MF" (Molecular Function), "CC" (Cellular Component)
+                              pAdjustMethod = "BH",
+                              qvalueCutoff = 0.05,
+                              readable = TRUE) # Convert IDs back to gene symbols
+GO_microglia_2wk_CC_down <- enrichGO(gene = microglia_2wk_down$ENTREZID, 
+                              OrgDb = org.Mm.eg.db, 
+                              keyType = "ENTREZID",
+                              ont = "CC",   # Options: "BP" (Biological Process), "MF" (Molecular Function), "CC" (Cellular Component)
+                              pAdjustMethod = "BH",
+                              qvalueCutoff = 0.05,
+                              readable = TRUE) # Convert IDs back to gene symbols
+
+
+
+#KEGG---
+kegg_microglia_2wk_up <- enrichKEGG(gene = microglia_2wk_up$ENTREZID, 
+                           organism = "mmu",   # "mmu" is the KEGG code for mouse
+                           pAdjustMethod = "BH",
+                           qvalueCutoff = 0.05)
+kegg_microglia_2wk_down <- enrichKEGG(gene = microglia_2wk_down$ENTREZID, 
+                                organism = "mmu",   # "mmu" is the KEGG code for mouse
+                                pAdjustMethod = "BH",
+                                qvalueCutoff = 0.05)
+
+# Extract the results
+GOBP_results_2wk_microglia_up <- GO_microglia_2wk_BP_up@result
+GOMF_results_2wk_microglia_up <- GO_microglia_2wk_MF_up@result
+GOCC_results_2wk_microglia_up <- GO_microglia_2wk_CC_up@result
+KEGG_results_2wk_microglia_up <- kegg_microglia_36wk_up@result
+
+GOBP_results_2wk_microglia_down <- GO_microglia_2wk_BP_down@result
+GOMF_results_2wk_microglia_down <- GO_microglia_2wk_MF_down@result
+GOCC_results_2wk_microglia_down <- GO_microglia_2wk_CC_down@result
+KEGG_results_2wk_microglia_down <- kegg_microglia_36wk_down@result
+# Save the results to a CSV file
+write.csv(GOBP_results_2wk_microglia_down,  "data/GOBP_results_2wk_microglia_down.csv", row.names = FALSE)
+write.csv(GOMF_results_2wk_microglia_down,  "data\\microglia/GOMF_results_2wk_microglia_down.csv", row.names = FALSE)
+write.csv(GOCC_results_2wk_microglia_down,  "data/GOCC_results_2wk_microglia_down.csv", row.names = FALSE)
+write.csv(KEGG_results_2wk_microglia_down,  "data/KEGG_results_2wk_microglia_down.csv", row.names = FALSE)
+
+write.csv(GOBP_results_2wk_microglia_up,  "data/GOBP_results_2wk_microglia_up.csv", row.names = FALSE)
+write.csv(GOMF_results_2wk_microglia_up,  "data/GOMF_results_2wk_microglia_up.csv", row.names = FALSE)
+write.csv(GOCC_results_2wk_microglia_up,  "data/GOCC_results_2wk_microglia_up.csv", row.names = FALSE)
+write.csv(KEGG_results_2wk_microglia_up,  "data/KEGG_results_2wk_microglia_up.csv", row.names = FALSE)
+
+#astrocytes-------------------
+# Load CSV file
+astrocyte_2wk_up <- read.csv(data\\astrocyte\\astrocyte_2wk_up.csv", stringsAsFactors = FALSE)
+astrocyte_2wk_down <- read.csv("data\\astrocyte_2wk_down.csv", stringsAsFactors = FALSE)
+#perfom GO---
+#2weeks---------------------------
+GO_astrocyte_2wk_BP_up <- enrichGO(gene = astrocyte_2wk_up$ENTREZID, 
+                                   OrgDb = org.Mm.eg.db, 
+                                   keyType = "ENTREZID",
+                                   ont = "BP",   # Options: "BP" (Biological Process), "MF" (Molecular Function), "CC" (Cellular Component)
+                                   pAdjustMethod = "BH",
+                                   qvalueCutoff = 0.05,
+                                   readable = TRUE) # Convert IDs back to gene symbols
+GO_astrocyte_2wk_MF_up <- enrichGO(gene = astrocyte_2wk_up$ENTREZID, 
+                                   OrgDb = org.Mm.eg.db, 
+                                   keyType = "ENTREZID",
+                                   ont = "MF",   # Options: "BP" (Biological Process), "MF" (Molecular Function), "CC" (Cellular Component)
+                                   pAdjustMethod = "BH",
+                                   qvalueCutoff = 0.05,
+                                   readable = TRUE) # Convert IDs back to gene symbols
+GO_astrocyte_2wk_CC_up <- enrichGO(gene = astrocyte_2wk_up$ENTREZID, 
+                                   OrgDb = org.Mm.eg.db, 
+                                   keyType = "ENTREZID",
+                                   ont = "CC",   # Options: "BP" (Biological Process), "MF" (Molecular Function), "CC" (Cellular Component)
+                                   pAdjustMethod = "BH",
+                                   qvalueCutoff = 0.05,
+                                   readable = TRUE) # Convert IDs back to gene symbols
+GO_astrocyte_2wk_BP_down <- enrichGO(gene = astrocyte_2wk_down$ENTREZID, 
+                                     OrgDb = org.Mm.eg.db, 
+                                     keyType = "ENTREZID",
+                                     ont = "BP",   # Options: "BP" (Biological Process), "MF" (Molecular Function), "CC" (Cellular Component)
+                                     pAdjustMethod = "BH",
+                                     qvalueCutoff = 0.05,
+                                     readable = TRUE) # Convert IDs back to gene symbols
+GO_astrocyte_2wk_MF_down <- enrichGO(gene = astrocyte_2wk_down$ENTREZID, 
+                                     OrgDb = org.Mm.eg.db, 
+                                     keyType = "ENTREZID",
+                                     ont = "MF",   # Options: "BP" (Biological Process), "MF" (Molecular Function), "CC" (Cellular Component)
+                                     pAdjustMethod = "BH",
+                                     qvalueCutoff = 0.05,
+                                     readable = TRUE) # Convert IDs back to gene symbols
+GO_astrocyte_2wk_CC_down <- enrichGO(gene = astrocyte_2wk_down$ENTREZID, 
+                                     OrgDb = org.Mm.eg.db, 
+                                     keyType = "ENTREZID",
+                                     ont = "CC",   # Options: "BP" (Biological Process), "MF" (Molecular Function), "CC" (Cellular Component)
+                                     pAdjustMethod = "BH",
+                                     qvalueCutoff = 0.05,
+                                     readable = TRUE) # Convert IDs back to gene symbols
+
+
+
+#KEGG---
+kegg_astrocyte_2wk_up <- enrichKEGG(gene = astrocyte_2wk_up$ENTREZID, 
+                                    organism = "mmu",   # "mmu" is the KEGG code for mouse
+                                    pAdjustMethod = "BH",
+                                    qvalueCutoff = 0.05)
+kegg_astrocyte_2wk_down <- enrichKEGG(gene = astrocyte_2wk_down$ENTREZID, 
+                                      organism = "mmu",   # "mmu" is the KEGG code for mouse
+                                      pAdjustMethod = "BH",
+                                      qvalueCutoff = 0.05)
+
+# Extract the results
+GOBP_results_2wk_astrocyte_up <- GO_astrocyte_2wk_BP_up@result
+GOMF_results_2wk_astrocyte_up <- GO_astrocyte_2wk_MF_up@result
+GOCC_results_2wk_astrocyte_up <- GO_astrocyte_2wk_CC_up@result
+KEGG_results_2wk_astrocyte_up <- kegg_astrocyte_36wk_up@result
+
+GOBP_results_2wk_astrocyte_down <- GO_astrocyte_2wk_BP_down@result
+GOMF_results_2wk_astrocyte_down <- GO_astrocyte_2wk_MF_down@result
+GOCC_results_2wk_astrocyte_down <- GO_astrocyte_2wk_CC_down@result
+KEGG_results_2wk_astrocyte_down <- kegg_astrocyte_36wk_down@result
+# Save the results to a CSV file
+write.csv(GOBP_results_2wk_astrocyte_down,  "data/GOBP_results_2wk_astrocyte_down.csv", row.names = FALSE)
+write.csv(GOMF_results_2wk_astrocyte_down,  "data/GOMF_results_2wk_astrocyte_down.csv", row.names = FALSE)
+write.csv(GOCC_results_2wk_astrocyte_down,  "ddata/GOCC_results_2wk_astrocyte_down.csv", row.names = FALSE)
+write.csv(KEGG_results_2wk_astrocyte_down,  "data/KEGG_results_2wk_astrocyte_down.csv", row.names = FALSE)
+
+write.csv(GOBP_results_2wk_astrocyte_up,  "data/GOBP_results_2wk_astrocyte_up.csv", row.names = FALSE)
+write.csv(GOMF_results_2wk_astrocyte_up,  "data/GOMF_results_2wk_astrocyte_up.csv", row.names = FALSE)
+write.csv(GOCC_results_2wk_astrocyte_up,  "data/GOCC_results_2wk_astrocyte_up.csv", row.names = FALSE)
+write.csv(KEGG_results_2wk_astrocyte_up,  "data/KEGG_results_2wk_astrocyte_up.csv", row.names = FALSE)
+
+#oligodendrocyte-----------------
+# Load CSV file
+oligodendrocyte_2wk_up <- read.csv("C:\\Users\\M294672\\Documents\\filtered_seurat_objects_2wks\\DGE for GO\\Oligo\\oligodendrocyte_2wk_up.csv", stringsAsFactors = FALSE)
+oligodendrocyte_2wk_down <- read.csv("C:\\Users\\M294672\\Documents\\filtered_seurat_objects_2wks\\DGE for GO\\Oligo\\oligodendrocyte_2wk_down.csv", stringsAsFactors = FALSE)
+
+#perfom GO---
+#2weeks---------------------------
+GO_oligodendrocyte_2wk_BP_up <- enrichGO(gene = oligodendrocyte_2wk_up$ENTREZID, 
+                                   OrgDb = org.Mm.eg.db, 
+                                   keyType = "ENTREZID",
+                                   ont = "BP",   # Options: "BP" (Biological Process), "MF" (Molecular Function), "CC" (Cellular Component)
+                                   pAdjustMethod = "BH",
+                                   qvalueCutoff = 0.05,
+                                   readable = TRUE) # Convert IDs back to gene symbols
+GO_oligodendrocyte_2wk_MF_up <- enrichGO(gene = oligodendrocyte_2wk_up$ENTREZID, 
+                                   OrgDb = org.Mm.eg.db, 
+                                   keyType = "ENTREZID",
+                                   ont = "MF",   # Options: "BP" (Biological Process), "MF" (Molecular Function), "CC" (Cellular Component)
+                                   pAdjustMethod = "BH",
+                                   qvalueCutoff = 0.05,
+                                   readable = TRUE) # Convert IDs back to gene symbols
+GO_oligodendrocyte_2wk_CC_up <- enrichGO(gene = oligodendrocyte_2wk_up$ENTREZID, 
+                                   OrgDb = org.Mm.eg.db, 
+                                   keyType = "ENTREZID",
+                                   ont = "CC",   # Options: "BP" (Biological Process), "MF" (Molecular Function), "CC" (Cellular Component)
+                                   pAdjustMethod = "BH",
+                                   qvalueCutoff = 0.05,
+                                   readable = TRUE) # Convert IDs back to gene symbols
+GO_oligodendrocyte_2wk_BP_down <- enrichGO(gene = oligodendrocyte_2wk_down$ENTREZID, 
+                                     OrgDb = org.Mm.eg.db, 
+                                     keyType = "ENTREZID",
+                                     ont = "BP",   # Options: "BP" (Biological Process), "MF" (Molecular Function), "CC" (Cellular Component)
+                                     pAdjustMethod = "BH",
+                                     qvalueCutoff = 0.05,
+                                     readable = TRUE) # Convert IDs back to gene symbols
+GO_oligodendrocyte_2wk_MF_down <- enrichGO(gene = oligodendrocyte_2wk_down$ENTREZID, 
+                                     OrgDb = org.Mm.eg.db, 
+                                     keyType = "ENTREZID",
+                                     ont = "MF",   # Options: "BP" (Biological Process), "MF" (Molecular Function), "CC" (Cellular Component)
+                                     pAdjustMethod = "BH",
+                                     qvalueCutoff = 0.05,
+                                     readable = TRUE) # Convert IDs back to gene symbols
+GO_oligodendrocyte_2wk_CC_down <- enrichGO(gene = oligodendrocyte_2wk_down$ENTREZID, 
+                                     OrgDb = org.Mm.eg.db, 
+                                     keyType = "ENTREZID",
+                                     ont = "CC",   # Options: "BP" (Biological Process), "MF" (Molecular Function), "CC" (Cellular Component)
+                                     pAdjustMethod = "BH",
+                                     qvalueCutoff = 0.05,
+                                     readable = TRUE) # Convert IDs back to gene symbols
+
+
+
+#KEGG---
+kegg_oligodendrocyte_2wk_up <- enrichKEGG(gene = oligodendrocyte_2wk_up$ENTREZID, 
+                                    organism = "mmu",   # "mmu" is the KEGG code for mouse
+                                    pAdjustMethod = "BH",
+                                    qvalueCutoff = 0.05)
+kegg_oligodendrocyte_2wk_down <- enrichKEGG(gene = oligodendrocyte_2wk_down$ENTREZID, 
+                                      organism = "mmu",   # "mmu" is the KEGG code for mouse
+                                      pAdjustMethod = "BH",
+                                      qvalueCutoff = 0.05)
+
+# Extract the results
+GOBP_results_2wk_oligodendrocyte_up <- GO_oligodendrocyte_2wk_BP_up@result
+GOMF_results_2wk_oligodendrocyte_up <- GO_oligodendrocyte_2wk_MF_up@result
+GOCC_results_2wk_oligodendrocyte_up <- GO_oligodendrocyte_2wk_CC_up@result
+KEGG_results_2wk_oligodendrocyte_up <- kegg_oligodendrocyte_2wk_up@result
+
+GOBP_results_2wk_oligodendrocyte_down <- GO_oligodendrocyte_2wk_BP_down@result
+GOMF_results_2wk_oligodendrocyte_down <- GO_oligodendrocyte_2wk_MF_down@result
+GOCC_results_2wk_oligodendrocyte_down <- GO_oligodendrocyte_2wk_CC_down@result
+KEGG_results_2wk_oligodendrocyte_down <- kegg_oligodendrocyte_2wk_down@result
+# Save the results to a CSV file
+write.csv(GOBP_results_2wk_oligodendrocyte_down,  "data/GOBP_results_2wk_oligodendrocyte_down.csv", row.names = FALSE)
+write.csv(GOMF_results_2wk_oligodendrocyte_down,  "data/GOMF_results_2wk_oligodendrocyte_down.csv", row.names = FALSE)
+write.csv(GOCC_results_2wk_oligodendrocyte_down,  "data/GOCC_results_2wk_oligodendrocyte_down.csv", row.names = FALSE)
+write.csv(KEGG_results_2wk_oligodendrocyte_down,  "data/KEGG_results_2wk_oligodendrocyte_down.csv", row.names = FALSE)
+
+write.csv(GOBP_results_2wk_oligodendrocyte_up,  "data/GOBP_results_2wk_oligodendrocyte_up.csv", row.names = FALSE)
+write.csv(GOMF_results_2wk_oligodendrocyte_up,  "data/GOMF_results_2wk_oligodendrocyte_up.csv", row.names = FALSE)
+write.csv(GOCC_results_2wk_oligodendrocyte_up,  "data/GOCC_results_2wk_oligodendrocyte_up.csv", row.names = FALSE)
+write.csv(KEGG_results_2wk_oligodendrocyte_up,  "data/KEGG_results_2wk_oligodendrocyte_up.csv", row.names = FALSE)
+
+#neuron-----------------------
+# Load CSV file
+neuron_2wk_up <- read.csv("C:\\Users\\M294672\\Documents\\filtered_seurat_objects_2wks\\DGE for GO\\neuron\\neuron_2wk_up.csv", stringsAsFactors = FALSE)
+neuron_2wk_down <- read.csv("C:\\Users\\M294672\\Documents\\filtered_seurat_objects_2wks\\DGE for GO\\neuron\\neuron_2wk_down.csv", stringsAsFactors = FALSE)
+
+#perfom GO---
+#2weeks---------------------------
+GO_neuron_2wk_BP_up <- enrichGO(gene = neuron_2wk_up$ENTREZID, 
+                                         OrgDb = org.Mm.eg.db, 
+                                         keyType = "ENTREZID",
+                                         ont = "BP",   # Options: "BP" (Biological Process), "MF" (Molecular Function), "CC" (Cellular Component)
+                                         pAdjustMethod = "BH",
+                                         qvalueCutoff = 0.05,
+                                         readable = TRUE) # Convert IDs back to gene symbols
+GO_neuron_2wk_MF_up <- enrichGO(gene = neuron_2wk_up$ENTREZID, 
+                                         OrgDb = org.Mm.eg.db, 
+                                         keyType = "ENTREZID",
+                                         ont = "MF",   # Options: "BP" (Biological Process), "MF" (Molecular Function), "CC" (Cellular Component)
+                                         pAdjustMethod = "BH",
+                                         qvalueCutoff = 0.05,
+                                         readable = TRUE) # Convert IDs back to gene symbols
+GO_neuron_2wk_CC_up <- enrichGO(gene = neuron_2wk_up$ENTREZID, 
+                                         OrgDb = org.Mm.eg.db, 
+                                         keyType = "ENTREZID",
+                                         ont = "CC",   # Options: "BP" (Biological Process), "MF" (Molecular Function), "CC" (Cellular Component)
+                                         pAdjustMethod = "BH",
+                                         qvalueCutoff = 0.05,
+                                         readable = TRUE) # Convert IDs back to gene symbols
+GO_neuron_2wk_BP_down <- enrichGO(gene = neuron_2wk_down$ENTREZID, 
+                                           OrgDb = org.Mm.eg.db, 
+                                           keyType = "ENTREZID",
+                                           ont = "BP",   # Options: "BP" (Biological Process), "MF" (Molecular Function), "CC" (Cellular Component)
+                                           pAdjustMethod = "BH",
+                                           qvalueCutoff = 0.05,
+                                           readable = TRUE) # Convert IDs back to gene symbols
+GO_neuron_2wk_MF_down <- enrichGO(gene = neuron_2wk_down$ENTREZID, 
+                                           OrgDb = org.Mm.eg.db, 
+                                           keyType = "ENTREZID",
+                                           ont = "MF",   # Options: "BP" (Biological Process), "MF" (Molecular Function), "CC" (Cellular Component)
+                                           pAdjustMethod = "BH",
+                                           qvalueCutoff = 0.05,
+                                           readable = TRUE) # Convert IDs back to gene symbols
+GO_neuron_2wk_CC_down <- enrichGO(gene = neuron_2wk_down$ENTREZID, 
+                                           OrgDb = org.Mm.eg.db, 
+                                           keyType = "ENTREZID",
+                                           ont = "CC",   # Options: "BP" (Biological Process), "MF" (Molecular Function), "CC" (Cellular Component)
+                                           pAdjustMethod = "BH",
+                                           qvalueCutoff = 0.05,
+                                           readable = TRUE) # Convert IDs back to gene symbols
+
+
+
+#KEGG---
+kegg_neuron_2wk_up <- enrichKEGG(gene = neuron_2wk_up$ENTREZID, 
+                                          organism = "mmu",   # "mmu" is the KEGG code for mouse
+                                          pAdjustMethod = "BH",
+                                          qvalueCutoff = 0.05)
+kegg_neuron_2wk_down <- enrichKEGG(gene = neuron_2wk_down$ENTREZID, 
+                                            organism = "mmu",   # "mmu" is the KEGG code for mouse
+                                            pAdjustMethod = "BH",
+                                            qvalueCutoff = 0.05)
+
+# Extract the results
+GOBP_results_2wk_neuron_up <- GO_neuron_2wk_BP_up@result
+GOMF_results_2wk_neuron_up <- GO_neuron_2wk_MF_up@result
+GOCC_results_2wk_neuron_up <- GO_neuron_2wk_CC_up@result
+KEGG_results_2wk_neuron_up <- kegg_neuron_2wk_up@result
+
+GOBP_results_2wk_neuron_down <- GO_neuron_2wk_BP_down@result
+GOMF_results_2wk_neuron_down <- GO_neuron_2wk_MF_down@result
+GOCC_results_2wk_neuron_down <- GO_neuron_2wk_CC_down@result
+KEGG_results_2wk_neuron_down <- kegg_neuron_2wk_down@result
+# Save the results to a CSV file
+write.csv(GOBP_results_2wk_neuron_down,  "data/GOBP_results_2wk_neuron_down.csv", row.names = FALSE)
+write.csv(GOMF_results_2wk_neuron_down,  "data/GOMF_results_2wk_neuron_down.csv", row.names = FALSE)
+write.csv(GOCC_results_2wk_neuron_down,  "data/GOCC_results_2wk_neuron_down.csv", row.names = FALSE)
+write.csv(KEGG_results_2wk_neuron_down,  "data/KEGG_results_36wk_neuron_down.csv", row.names = FALSE)
+
+write.csv(GOBP_results_2wk_neuron_up,  "data/GOBP_results_2wk_neuron_up.csv", row.names = FALSE)
+write.csv(GOMF_results_2wk_neuron_up,  "data/GOMF_results_2wk_neuron_up.csv", row.names = FALSE)
+write.csv(GOCC_results_2wk_neuron_up,  "data/GOCC_results_2wk_neuron_up.csv", row.names = FALSE)
+write.csv(KEGG_results_2wk_neuron_up,  "data/KEGG_results_2wk_neuron_up.csv", row.names = FALSE)
+
+#GO plots----------
+# Read the CSV files
+up_go <- read_csv("data\\GOBP_results_2wk_EC_up.csv")
+down_go <- read_csv("data\\GOBP_results_2wk_EC_down.csv")
+
+# Add a regulation column
+up_go <- up_go %>%
+  mutate(Regulation = "Upregulated")
+
+down_go <- down_go %>%
+  mutate(Regulation = "Downregulated")
+
+# Combine the datasets
+combined_go <- bind_rows(up_go, down_go)
+
+# Calculate -log10(p.adjust) for visualization
+combined_go <- combined_go %>%
+  mutate(log_p_adjust = -log10(p.adjust))
+
+
+# Define different numbers of top terms
+up_top_n <- 10 # Number of upregulated GO terms
+down_top_n <- 10 # Number of downregulated GO terms
+
+
+# Select top upregulated terms
+top_up <- combined_go %>%
+  filter(Regulation == "Upregulated") %>%
+  top_n(n = up_top_n, wt = log_p_adjust)
+# Select top downregulated terms
+top_down <- combined_go %>%
+  filter(Regulation == "Downregulated") %>%
+  top_n(n = down_top_n, wt = log_p_adjust)
+# Combine selected terms
+top_terms <- bind_rows(top_up, top_down)
+
+# Assign negative values to downregulated terms
+top_terms <- top_terms %>%
+  mutate(log_p_adjust = ifelse(Regulation == "Downregulated", -log_p_adjust, log_p_adjust))
+
+# Create the plot
+ggplot(top_terms, aes(x = reorder(Description, log_p_adjust), y = log_p_adjust, fill = Regulation)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(
+    title = "Top GO Terms for Upregulated and Downregulated Genes",
+    x = "GO Term",
+    y = "-Log10 Adjusted P-Value"
+  ) +
+  scale_fill_manual(values = c("Upregulated" = "salmon", "Downregulated" = "steelblue")) +
+  theme_bw()
+
+##KEGG plots--------
+library(dplyr)
+library(ggplot2)
+library(scales)
+library(grid)
+ 
+
+kegg_up <- read.csv("data\\KEGG_results_2wk_neuron_up.csv")
+kegg_down <- read.csv("data\\KEGG_results_2wk_neuron_down.csv")
+
+# Number of pathways to show from each direction
+top_n_each <- 16
+
+# Use 0.05 to retain only statistically significant pathways.
+# Use 1 to show pathways regardless of significance.
+padj_cutoff <- 0.05
+
+
+# Convert GeneRatio values such as "12/150" into numeric values
+convert_gene_ratio <- function(x) {
+  
+  vapply(
+    strsplit(as.character(x), "/"),
+    function(z) {
+      as.numeric(z[1]) / as.numeric(z[2])
+    },
+    numeric(1)
+  )
+}
+
+
+# Activated/upregulated pathways
+kegg_activated_df <- as.data.frame(kegg_up) %>%
+  filter(
+    !is.na(p.adjust),
+    p.adjust <= padj_cutoff
+  ) %>%
+  slice_min(
+    order_by = p.adjust,
+    n = top_n_each,
+    with_ties = FALSE
+  ) %>%
+  mutate(
+    Direction = "of upregulated genes"
+  )
+
+
+# Suppressed/downregulated pathways
+kegg_suppressed_df <- as.data.frame(kegg_down) %>%
+  filter(
+    !is.na(p.adjust),
+    p.adjust <= padj_cutoff
+  ) %>%
+  slice_min(
+    order_by = p.adjust,
+    n = top_n_each,
+    with_ties = FALSE
+  ) %>%
+  mutate(
+    Direction = "of downregulated genes"
+  )
+
+
+# Combine the two enrichment results
+kegg_combined <- bind_rows(
+  kegg_activated_df,
+  kegg_suppressed_df
+)
+
+if (nrow(kegg_combined) == 0) {
+  stop("No KEGG pathways remain after adjusted P-value filtering.")
+}
+
+
+# Calculate numeric GeneRatio and -log10(adjusted P-value)
+kegg_combined <- kegg_combined %>%
+  mutate(
+    GeneRatio_numeric = convert_gene_ratio(GeneRatio),
+    
+    # pmax prevents infinite values when p.adjust is reported as zero
+    minus_log10_padj = -log10(
+      pmax(p.adjust, .Machine$double.xmin)
+    )
+  )
+
+
+# Order pathways according to their best adjusted P-value
+pathway_order <- kegg_combined %>%
+  group_by(Description) %>%
+  summarise(
+    best_p_adjust = min(p.adjust, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(best_p_adjust)) %>%
+  pull(Description)
+
+
+kegg_combined <- kegg_combined %>%
+  mutate(
+    Direction = factor(
+      Direction,
+      levels = c("of upregulated genes", "of downregulated genes")
+    ),
+    
+    Description = factor(
+      Description,
+      levels = unique(pathway_order)
+    )
+  )
+
+
+# Use the same GeneRatio scale in both panels
+gene_ratio_max <- max(
+  kegg_combined$GeneRatio_numeric,
+  na.rm = TRUE
+)
+
+
+# Create the KEGG bubble plot
+kegg_bubble_plot <- ggplot(
+  kegg_combined,
+  aes(
+    x = GeneRatio_numeric,
+    y = Description
+  )
+) +
+  geom_point(
+    aes(
+      size = Count,
+      colour = minus_log10_padj
+    ),
+    alpha = 0.95
+  ) +
+  
+  facet_grid(
+    cols = vars(Direction)
+  ) +
+  
+  scale_y_discrete(
+    drop = FALSE
+  ) +
+  
+  scale_x_continuous(
+    limits = c(0, gene_ratio_max * 1.08),
+    breaks = pretty_breaks(n = 4),
+    expand = expansion(mult = c(0.01, 0.03))
+  ) +
+  
+  scale_size_continuous(
+    name = "Count",
+    range = c(2.5, 8)
+  ) +
+  
+  # Larger -log10 adjusted P-values indicate greater significance
+  scale_colour_gradient(
+    name = expression(-log[10]("adj. p-value")),
+    low = "blue",
+    high = "red"
+  ) +
+  
+  labs(
+    title = "Enriched Pathways",
+    x = "GeneRatio",
+    y = NULL
+  ) +
+  
+  theme_bw(base_size = 10) +
+  
+  theme(
+    plot.title = element_text(
+      size = 12,
+      hjust = 0.5
+    ),
+    
+    strip.background = element_rect(
+      fill = "white",
+      colour = "grey50",
+      linewidth = 0.5
+    ),
+    
+    strip.text = element_text(
+      size = 9,
+      colour = "black"
+    ),
+    
+    axis.title.x = element_text(
+      size = 10,
+      colour = "black"
+    ),
+    
+    axis.text.x = element_text(
+      size = 8,
+      colour = "black"
+    ),
+    
+    axis.text.y = element_text(
+      size = 8,
+      colour = "black"
+    ),
+    
+    panel.grid.major = element_line(
+      colour = "grey90",
+      linewidth = 0.3
+    ),
+    
+    panel.grid.minor = element_blank(),
+    
+    panel.spacing.x = unit(
+      0.1,
+      "cm"
+    ),
+    
+    legend.position = "right",
+    
+    legend.title = element_text(
+      size = 9
+    ),
+    
+    legend.text = element_text(
+      size = 8
+    )
+  ) +
+  
+  guides(
+    size = guide_legend(
+      order = 1,
+      title.position = "top"
+    ),
+    
+    colour = guide_colourbar(
+      order = 2,
+      title.position = "top",
+      barheight = unit(3, "cm")
+    )
+  )
+
+kegg_bubble_plot
+
+#volcano plot with ggplot-------
+library(ggplot2)
+library(ggrepel)
+#EC 2wk------
+EC_2wk_volcano <- read.csv("data\\EC_2wk_filtered.csv")
+#Calculate the negative log10 of the p-values:
+EC_2wk_volcano$neg_log10_pvalue <- -log10(EC_2wk_volcano$p_val_adj)
+
+# Define significance thresholds
+log2FC_threshold <- 0.25
+pvalue_threshold <- 0.05
+
+# Add a column for significance
+EC_2wk_volcano$significance <- "Not Significant"
+EC_2wk_volcano$significance[EC_2wk_volcano$avg_log2FC > log2FC_threshold & EC_2wk_volcano$p_val_adj < pvalue_threshold] <- "Upregulated"
+EC_2wk_volcano$significance[EC_2wk_volcano$avg_log2FC < -log2FC_threshold & EC_2wk_volcano$p_val_adj < pvalue_threshold] <- "Downregulated"
+label_EC2wk <- c("Eno1", "Depp1", "Rgs5", "Limd1", "Trp53inp1", "Gja1", "Hsp90ab1", "Vwf", "Vwa3a", "Ifit1", "Aplp1", "Serf2", "Stau2", "Mt3", "mt-Cytb", "mt-Nd1", "mt-Nd4", "mt-Nd4l", "Hspb1", "Uqcrc1", "Taco1", "Cox20", "Atp5m2", "Cmpk2", "Tfpi", "Rpl35", "Rpl38", "Rps39", "Rps28", "Rps14", "Arpc3", "Aldh3a2", "H2-k1", "Actg1", "Tagln2", "Ramp2", "Tmsb4x", "Mrpl27", "Camk1d", "Lars2", "Cmss1")
+# Create the plot
+
+ggplot(EC_2wk_volcano, aes(x = avg_log2FC, y = neg_log10_pvalue, color = significance))+
+  geom_vline(xintercept = c(-0.25, 0.25), col ='black', linetype ='dashed')+
+  geom_hline(yintercept = -log10(0.05), col ='black', linetype ='dashed')+
+  geom_point(size =2) +
+  scale_color_manual(values = c("Downregulated" = "#00A", "Not Significant" = "grey", "Upregulated" = "#bb0c00")) +
+  theme_bw() +
+  geom_text_repel(data = subset(EC_2wk_volcano, gene %in% label_EC2wk),
+                  aes(label = gene),
+                  size = 3.5,
+                  box.padding = 0.65,
+                  point.padding = 0.3,
+                  max.overlaps = Inf,
+                  fontface    = "bold", 
+                  segment.size = 0.5,
+                  segment.color = "black",
+                  segment.alpha = 0.3) +
+  coord_cartesian(xlim = c(-3, 3))+
+  labs(color = 'EC_2wk',
+       x = expression("Log"[2]*"FC"), y = expression("-Log"[10]*"adjusted p-value"))
+
+
+#cell communication --------------------
+library(Seurat)
+library(SeuratObject)
+library(SeuratData)
+library(ggplot2)
+library(hdf5r)
+library(tidyverse)
+library(gridExtra)
+library(DoubletFinder)
+library(harmony)
+library(pheatmap)
+library(celldex)
+library(SingleR)
+library(pheatmap)
+library(ComplexHeatmap)
+library(heatmaply)
+library(Matrix)
+library(proxyC)
+library(clusterProfiler)
+library(org.Mm.eg.db)   
+library(enrichplot) 
+library(monocle3)
+library(gitcreds)
+library(SeuratWrappers)
+library(reticulate)
+library(patchwork)
+library(CellChat)
+library(circlize)
+library(NMF)
+library(ggalluvial)
+library(ggVennDiagram)
+
+#cell chat workflow for saline and spike-------------------
+#load rds file
+harmony_annotated_2wk <- readRDS("data\\harmony_annotated_2wk.rds")
+harmony_annotated_2wk$celltype_condition <- paste(harmony_annotated_2wk$cell_type, harmony_annotated_2wk$condition, sep = "_")
+
+# Extract counts from all layers and combine them
+counts_layer1 <- harmony_annotated_2wk[["RNA"]]$counts.1
+counts_layer2 <- harmony_annotated_2wk[["RNA"]]$counts.2
+counts_layer3 <- harmony_annotated_2wk[["RNA"]]$counts.3
+counts_layer4 <- harmony_annotated_2wk[["RNA"]]$counts.4
+
+# Combine layers into one expression matrix
+expression_matrix <- cbind(counts_layer1, counts_layer2, counts_layer3, counts_layer4)
+
+# Extract metadata including cell types and condition
+metadata <- harmony_annotated_2wk@meta.data
+
+# Add a new column to combine cell type and condition
+metadata$celltype_condition <- paste(metadata$cell_type, metadata$condition, sep = "_")
+
+# Ensure the column names of expression_matrix match row names in metadata
+colnames(expression_matrix) <- rownames(metadata)
+
+# Define the five cell types
+selected_cells <- metadata$cell_type %in% c("EC", "microglia", "neuron", "astrocyte", "oligodendrocyte")
+
+# Subset metadata and expression matrix
+filtered_metadata <- metadata[selected_cells, ]
+filtered_expression_matrix <- expression_matrix[, rownames(filtered_metadata)]
+
+# Define control and treatment groups
+control_cells <- rownames(filtered_metadata[filtered_metadata$condition == "Saline_2wk", ])
+treatment_cells <- rownames(filtered_metadata[filtered_metadata$condition == "spike_2wk", ])
+
+# Subset expression matrix and metadata
+expression_control <- filtered_expression_matrix[, control_cells]
+expression_treatment <- filtered_expression_matrix[, treatment_cells]
+
+metadata_control <- filtered_metadata[control_cells, ]
+metadata_treatment <- filtered_metadata[treatment_cells, ]
+# Create CellChat objects for both conditions----------------
+cellchat_control2 <- createCellChat(object = expression_control, meta = metadata_control, group.by = "cell_type")
+cellchat_treatment2 <- createCellChat(object = expression_treatment, meta = metadata_treatment, group.by = "cell_type")
+# Set Mouse Ligand-Receptor Database
+CellChatDB <- CellChatDB.mouse
+showDatabaseCategory(CellChatDB.mouse)
+cellchat_control2@DB <- CellChatDB
+cellchat_treatment2@DB <- CellChatDB
+#write database items as csv
+interaction <- CellChatDB.mouse$interaction
+complex <- CellChatDB.mouse$complex
+cofactor <- CellChatDB.mouse$cofactor
+geneInfo <- CellChatDB.mouse$geneInfo
+
+write.csv(interaction,  file = "data\\cellchat 2wk/interaction.csv")
+write.csv(complex,  file = "data\\cellchat 2wk/complex.csv")
+write.csv(cofactor,  file = "data\\cellchat 2wk/cofactor.csv")
+write.csv(geneInfo,  file = "data\\cellchat 2wk/geneInfo.csv")
+# Control Group Processing
+cellchat_control2 <- subsetData(cellchat_control2)
+cellchat_control2 <- identifyOverExpressedGenes(cellchat_control2)
+cellchat_control2 <- identifyOverExpressedInteractions(cellchat_control2)
+cellchat_control2 <- projectData(cellchat_control2, PPI.mouse)
+
+# Treatment Group Processing
+cellchat_treatment2 <- subsetData(cellchat_treatment2)
+cellchat_treatment2 <- identifyOverExpressedGenes(cellchat_treatment2)
+cellchat_treatment2 <- identifyOverExpressedInteractions(cellchat_treatment2)
+cellchat_treatment2 <- projectData(cellchat_treatment2, PPI.mouse)
+#compute communication probability and infer cellular communication network,
+#signalling pathways and aggregated cell-cell communication network 
+# Compute for Control
+cellchat_control2 <- computeCommunProb(cellchat_control2)
+cellchat_control2 <- computeCommunProbPathway(cellchat_control2)
+cellchat_control2 <- aggregateNet(cellchat_control2)
+
+# Compute for Treatment
+cellchat_treatment2 <- computeCommunProb(cellchat_treatment2)
+cellchat_treatment2 <- computeCommunProbPathway(cellchat_treatment2)
+cellchat_treatment2 <- aggregateNet(cellchat_treatment2)
+cellchat_control2@net$count
+cellchat_treatment2@net$count
+cellchat_control2@net$weight
+cellchat_treatment2@net$weight
+# visualize the aggregated cell-cell communication network
+#control
+groupSize <- as.numeric(table(cellchat_control2@idents))
+par(mfrow = c(1, 2), xpd=TRUE)
+netVisual_circle(cellchat_control2@net$count, vertex.weight = groupSize, 
+                 weight.scale = T, label.edge= F, title.name = "Number of interactions")
+netVisual_circle(cellchat_control2@net$weight, vertex.weight = groupSize, 
+                 weight.scale = T, label.edge= F, title.name = "Interaction weights/strength")
+
+dev.off()
+#treatment
+groupSize <- as.numeric(table(cellchat_treatment2@idents))
+par(mfrow = c(1, 2), xpd=TRUE)
+netVisual_circle(cellchat_treatment2@net$count, vertex.weight = groupSize, 
+                 weight.scale = T, label.edge= F, title.name = "Number of interactions")
+netVisual_circle(cellchat_treatment2@net$weight, vertex.weight = groupSize, 
+                 weight.scale = T, label.edge= F, title.name = "Interaction weights/strength")
+
+dev.off()
+#  examine the signaling sent from each cell group
+#control
+mat_control <- cellchat_control2@net$weight
+par(mfrow = c(2, 3), xpd=TRUE)
+for (i in 1:nrow(mat_control)) {
+  mat2_control <- matrix(0, nrow = nrow(mat_control), ncol = ncol(mat_control), dimnames = dimnames(mat_control))
+  mat2_control[i, ] <- mat_control[i, ]
+  netVisual_circle(mat2_control, vertex.weight = groupSize, weight.scale = F, 
+                   edge.weight.max = max(mat_control), title.name = rownames(mat_control)[i])
+}
+
+dev.off()
+#treatment
+mat_treatment <- cellchat_treatment2@net$weight
+par(mfrow = c(2, 3), xpd=TRUE)
+for (i in 1:nrow(mat_treatment)) {
+  mat2_treatment <- matrix(0, nrow = nrow(mat_treatment), ncol = ncol(mat_treatment), dimnames = dimnames(mat_treatment))
+  mat2_treatment[i, ] <- mat_treatment[i, ]
+  netVisual_circle(mat2_treatment, vertex.weight = groupSize, weight.scale = F, 
+                   edge.weight.max = max(mat_treatment), title.name = rownames(mat_treatment)[i])
+}
+
+dev.off()
+
+# the contribution of each LR pairs to the communication network
+#control
+ LRCONTROL<- extractEnrichedLR(cellchat_control2, signaling = c(cellchat_control2@netP[["pathways"]]),
+                  geneLR.return = TRUE)
+ write.csv(LRCONTROL$pairLR, file = "LRCONTROL.csv", row.names = FALSE)
+ write.csv(data.frame(gene = LRCONTROL$geneLR), file = "Gene_LRCONTROL.csv", row.names = FALSE)
+ 
+ #treatment
+LRtreatment <- extractEnrichedLR(cellchat_treatment2, signaling = c(cellchat_treatment2@netP[["pathways"]]),
+                  geneLR.return = TRUE)
+write.csv(LRtreatment$pairLR, file = "LRtreatment.csv", row.names = FALSE)
+write.csv(data.frame(gene = LRtreatment$geneLR), file = "Gene_LRtreatment.csv", row.names = FALSE)
+
+# visualize the contribution of each LR pairs to the communication network
+#control
+netAnalysis_contribution(cellchat_control2, 
+                         signaling = c(cellchat_control2@netP[["pathways"]]), 
+                         title = "Contribution of each LR pairs")
+#ttt
+netAnalysis_contribution(cellchat_treatment2, 
+                         signaling = c(cellchat_treatment2@netP[["pathways"]]), 
+                         title = "Contribution of each LR pairs")
+
+#  Compute the network centrality scores
+cellchat_control2 <- netAnalysis_computeCentrality(cellchat_control2, slot.name = "netP")
+cellchat_treatment2 <- netAnalysis_computeCentrality(cellchat_treatment2, slot.name = "netP")
+# Scatter plot to visualize aggregated communication networks for each cell type
+netAnalysis_signalingRole_scatter(cellchat_control2) # all signaling pathways
+netAnalysis_signalingRole_scatter(cellchat_treatment2)
+
+# Heatmap to visualize dominant cell types for each signaling pathway
+netAnalysis_signalingRole_heatmap(cellchat_treatment2, pattern = "outgoing", height = 11)
+netAnalysis_signalingRole_heatmap(cellchat, pattern = "incoming", height = 11)
+
+# Identify global communication patterns to explore how multiple cell types-----
+# and signaling pathways coordinate
+#control 
+# Identify and visualize outgoing communication pattern of secreting cells----
+selectK(cellchat_control2, pattern = "outgoing") # infer the number of patterns, NMF
+nPatterns = 4 # a suitable number of patterns is the one begin to drop suddenly.
+cellchat_control2 <- identifyCommunicationPatterns(cellchat_control2, pattern = "outgoing",
+                                          k = nPatterns, width = 5, height = 14)
+dev.off()
+
+netAnalysis_river(cellchat_control2, pattern = "outgoing") # river plot
+
+#treatment
+selectK(cellchat_treatment2, pattern = "outgoing") # infer the number of patterns, NMF
+nPatterns = 4 # a suitable number of patterns is the one begin to drop suddenly.
+cellchat_treatment2 <- identifyCommunicationPatterns(cellchat_treatment2, pattern = "outgoing",
+                                                   k = nPatterns, width = 5, height = 14)
+dev.off()
+
+netAnalysis_river(cellchat_treatment2, pattern = "outgoing") # river plot
+
+# Identify and visualize incoming communication pattern of target cells----
+#control
+selectK(cellchat_control2, pattern = "incoming")
+nPatterns = 5
+cellchat_control2 <- identifyCommunicationPatterns(cellchat_control2,pattern = "incoming", 
+                                          k = nPatterns, width = 5, height = 14)
+netAnalysis_river(cellchat_control2, pattern = "incoming") # river plot
+netAnalysis_dot(cellchat_control2, pattern = "incoming") # dot plot
+#treatment
+selectK(cellchat_treatment2, pattern = "incoming")
+nPatterns = 3
+cellchat_treatment2 <- identifyCommunicationPatterns(cellchat_treatment2,pattern = "incoming", 
+                                                   k = nPatterns, width = 5, height = 14)
+netAnalysis_river(cellchat_treatment2, pattern = "incoming") # river plot
+
+#Extract the numeric tables behind the river plots------
+##Cell-group contributions to each pattern (cell → pattern “loadings”)left side
+str(cellchat_control2@netP$pattern)
+str(cellchat_treatment2@netP$pattern)
+
+out.ctrl <- cellchat_control2@netP$pattern$outgoing
+in.ctrl  <- cellchat_control2@netP$pattern$incoming
+out.ttt <- cellchat_treatment2@netP$pattern$outgoing
+in.ttt <- cellchat_treatment2@netP$pattern$incoming
+# Cell (rows) -> pattern (columns) loadings (get the numbers by clicking from the list on the left)
+cell_loading_out_ctrl <- out.ctrl$cell
+cell_loading_in_ctrl  <- in.ctrl$cell
+cell_loading_out_ttt <- out.ttt$cell
+cell_loading_in_ttt  <- in.ttt$cell
+
+
+#merged------------
+# Merge CellChat objects
+cellchat_list <- list(Control = cellchat_control2, Treatment = cellchat_treatment2)
+cellchat_merged <- mergeCellChat(cellchat_list, add.names = c("Control","Treatment"))
+cellchat_merged <- readRDS("data\\cellchat_merged.rds")
+cellchat_control2 <- readRDS("data\\cellchat_control2.rds")
+cellchat_treatment2 <- readRDS("\\datacellchat_treatment2.rds")
+ 
+
+# Compare the overall information flow of each signaling pathway
+rankNet(cellchat_merged, mode = "comparison", stacked = T, do.stat = TRUE) # 42 & 47
+rankNet(cellchat_merged, mode = "comparison", stacked = F, do.stat = TRUE)
+##Information flow figure------
+library(CellChat)
+library(ggplot2)
+
+#  Make a copy so cellchat_merged remains unchanged
+cellchat_rank <- cellchat_merged
+# Change Treatment to Spike for this figure
+netP_temp <- cellchat_rank@netP
+
+names(netP_temp)[
+  tolower(names(netP_temp)) == "treatment"
+] <- "Spike"
+
+cellchat_rank@netP <- netP_temp
+# Confirm the names
+names(cellchat_rank@netP)
+#  Generate the rankNet figure
+p_rank <- rankNet(
+  cellchat_rank,
+  mode = "comparison",
+  comparison = c(1, 2),
+  measure = "weight",
+  stacked = TRUE,
+  do.stat = TRUE,
+  
+  bar.w = 0.7,      # smaller value = thinner bars
+  font.size = 9
+) +
+  theme(
+    # Makes the plotting panel taller relative to its width
+    aspect.ratio = 1.9,            # bigger number less width
+    
+    # Moving the legend above reduces space on the right
+    legend.position = "top",
+    
+    axis.text = element_text(
+      size = 9,
+      colour = "black"
+    ),
+    
+    axis.title = element_text(
+      size = 12,
+      face = "bold"
+    ),
+    
+    legend.text = element_text(
+      size = 10
+    ),
+    
+    plot.margin = margin(
+      t = 5,
+      r = 5,
+      b = 5,
+      l = 5
+    )
+  )
+
+p_rank
+# 2Compare the total number of interactions and interaction strength
+compareInteractions(cellchat_merged, show.legend = F, group = c(1,2), measure = "count")
+compareInteractions(cellchat_merged, show.legend = F, group = c(1,2), measure = "weight")
+###make font of bar blot bigger and bar less wide.....
+
+p <- compareInteractions(
+  cellchat_merged,
+  show.legend = FALSE,
+  group = c(1, 2),
+  measure = "count"
+)
+p +
+  theme(
+    text = element_text(size = 14),       # general font
+    axis.text = element_text(size = 10),
+       axis.title = element_text(size = 12)
+  ) +
+  geom_bar(stat = "identity", width = 0.3)   # bar width (0.3–0.6 looks good)
+## bar plot figure-----
+
+library(ggplot2)
+
+p <- compareInteractions(
+  cellchat_merged,
+  show.legend = FALSE,
+  group = c(1, 2),
+  measure = "count",
+  width = 0.6,      # wider bars = smaller gap between bars
+  size.text = 10
+)
+
+p <- p +
+  scale_x_discrete(
+    labels = c(
+      "Control"   = "Control",
+      "Treatment" = "Spike"
+    )
+  ) +
+  theme(
+    # Category names: Control and Spike
+    axis.text.x = element_text(
+      size = 12,
+      colour = "black"
+    ),
+    
+    # Numerical values along the y-axis
+    axis.text.y = element_text(
+      size = 10,
+      colour = "black"
+    ),
+    
+    # Axis titles
+    axis.title.x = element_text(size = 12),
+    axis.title.y = element_text(size = 12)
+  )
+
+p
+
+
+
+###### scatter plot -----
+# Compare outgoing/incoming interaction strength for all the cell types
+names(cellchat_list)[names(cellchat_list) == "Treatment"] <- "Spike"
+count.sum <- sapply(cellchat_list, function(x) {rowSums(x@net$count) + 
+    colSums(x@net$count)-diag(x@net$count)})
+weight.MinMax <- c(min(count.sum), max(count.sum)) # control the dot size 
+gg <- list()
+for (i in 1:length(cellchat_list)) {
+  gg[[i]] <- netAnalysis_signalingRole_scatter(cellchat_list[[i]], 
+                                               title = names(cellchat_list)[i], weight.MinMax = weight.MinMax)
+}
+
+patchwork::wrap_plots(plots = gg)
+## scatter bigger font----
+library(CellChat)
+library(ggplot2)
+library(patchwork)
+
+# Calculate the common dot-size range
+count.sum <- sapply(
+  cellchat_list,
+  function(x) {
+    rowSums(x@net$count) +
+      colSums(x@net$count) -
+      diag(x@net$count)
+  }
+)
+
+weight.MinMax <- range(count.sum, na.rm = TRUE)
+
+# Generate the plots
+gg <- vector("list", length(cellchat_list))
+
+for (i in seq_along(cellchat_list)) {
+  
+  gg[[i]] <- netAnalysis_signalingRole_scatter(
+    cellchat_list[[i]],
+    title = names(cellchat_list)[i],
+    weight.MinMax = weight.MinMax,
+    
+    label.size = 6,          # cell-type names beside the dots
+    font.size = 13,          # general text size
+    font.size.title = 16     # Control and Spike titles
+  ) +
+    theme(
+      # X- and Y-axis titles
+      axis.title.x = element_text(
+        size = 14,
+        face = "bold",
+        colour = "black",
+        margin = margin(t = 10)
+      ),
+      
+      axis.title.y = element_text(
+        size = 14,
+        face = "bold",
+        colour = "black",
+        margin = margin(r = 10)
+      ),
+      
+      # Numerical values on the axes
+      axis.text.x = element_text(
+        size = 13,
+        colour = "black"
+      ),
+      
+      axis.text.y = element_text(
+        size = 13,
+        colour = "black"
+      ),
+      
+      # Panel titles
+      plot.title = element_text(
+        size = 16,
+        face = "bold",
+        hjust = 0.5
+      ),
+      
+      # Bubble-size legend
+      legend.title = element_text(
+        size = 14,
+        face = "bold"
+      ),
+      
+      legend.text = element_text(
+        size = 12
+      )
+    )
+}
+
+# Combine the plots
+combined_plot <- patchwork::wrap_plots(
+  plots = gg,
+  ncol = 2
+)
+
+combined_plot
+
+#  Show differential number of interactions or interaction strength among 
+# different cell populations, red(increased signaling)/blue(decreased signaling)
+##circle plot figure-----
+par(mfrow = c(1,2), xpd=TRUE)
+netVisual_diffInteraction(cellchat_merged, comparison = c(1, 2), measure = "count", 
+                          weight.scale = T, arrow.size = 0.1)
+netVisual_diffInteraction(cellchat_merged, comparison = c(1, 2), measure = "weight", 
+                          weight.scale = T, arrow.size = 0.1)
+
+
+# show the number of interactions or interaction strength.
+par(mfrow = c(1,2), xpd=TRUE)
+for (i in 1:length(object.list)) {
+  netVisual_circle(object.list[[i]]@net$count.merged, weight.scale = T, 
+                   label.edge= T, edge.weight.max = weight.max[3], edge.width.max = 12, 
+                   arrow.size = 0.1,
+                   title.name = paste0("Number of interactions - ", names(object.list)[i]))
+}
+
+par(mfrow = c(1,2), xpd=TRUE)
+netVisual_diffInteraction(cellchat, weight.scale = T, comparison = c(1, 2),
+                          arrow.size = 0.1, measure = "count.merged", label.edge = T)
+netVisual_diffInteraction(cellchat, weight.scale = T, comparison = c(1, 2),
+                          arrow.size = 0.1, measure = "weight.merged", label.edge = T)
+###### Heatmap
+#  Compare outgoing/incoming signaling associated with each cell population
+# combining all the identified signaling pathways from different datasets 
+all_pathways <- union(cellchat_list[[1]]@netP$pathways, 
+                      cellchat_list[[2]]@netP$pathways)
+
+##heatmap figure pathways-----
+
+ht1 = netAnalysis_signalingRole_heatmap(cellchat_list[[1]], pattern = "all", 
+                                        signaling = all_pathways, title = names(cellchat_list)[1],  
+                                        width = 5, height = 13, color.heatmap = "Spectral")
+ht2 = netAnalysis_signalingRole_heatmap(cellchat_list[[2]], pattern = "all", 
+                                        signaling = all_pathways, title = "Spike", 
+                                        width = 5, height = 13, color.heatmap = "Spectral")
+draw(ht1 + ht2, ht_gap = unit(0.5, "cm"))
+
+
+ht3 = netAnalysis_signalingRole_heatmap(cellchat_list[[1]], pattern ="outgoing", 
+                                        signaling = all_pathways, title = names(cellchat_list)[1], 
+                                        width = 5, height = 13)
+ht4 = netAnalysis_signalingRole_heatmap(cellchat_list[[2]], pattern ="outgoing", 
+                                        signaling = all_pathways, title = "Spike", 
+                                        width = 5, height = 13)
+draw(ht3 + ht4, ht_gap = unit(0.5, "cm"))
+
+ht5 = netAnalysis_signalingRole_heatmap(cellchat_list[[1]], pattern = "incoming", 
+                                        signaling = all_pathways, title = names(cellchat_list)[1], 
+                                        width = 5, height = 13, color.heatmap = "Reds")
+ht6 = netAnalysis_signalingRole_heatmap(cellchat_list[[2]], pattern ="incoming",
+                                        signaling = all_pathways, title = "Spike", 
+                                        width = 5, height = 13, color.heatmap = "Reds")
+draw(ht5 + ht6, ht_gap = unit(0.5, "cm"))
+
+#  show differential interaction number & interaction strength using heatmap
+gg1 <- netVisual_heatmap(cellchat_merged, comparison = c(1, 2), measure = "count")
+gg2 <- netVisual_heatmap(cellchat_merged, comparison = c(1, 2), measure = "weight")
+gg1 + gg2
+##bigger font heatmap figure----
+library(CellChat)
+library(ComplexHeatmap)
+
+gg1 <- netVisual_heatmap(
+  cellchat_merged,
+  comparison = c(1, 2),
+  measure = "count",
+  font.size = 12,          # cell-type names
+  font.size.title = 12,    # plot and axis titles
+  title.name = "Differential number of interactions"
+)
+
+gg2 <- netVisual_heatmap(
+  cellchat_merged,
+  comparison = c(1, 2),
+  measure = "weight",
+  font.size = 12,          # cell-type names
+  font.size.title = 12,    # plot and axis titles
+  title.name = "Differential interaction strength"
+)
+
+ComplexHeatmap::draw(
+  gg1 + gg2,
+  merge_legends = TRUE
+)
+
+#get eaxact numbers for strength---------------
+# strength matrix for group 1
+mat1 <- cellchat_merged@net[[1]][["weight"]]
+
+# strength matrix for group 2
+mat2 <- cellchat_merged@net[[2]][["weight"]]
+
+# their difference (group2 - group1)
+mat_diff <- mat2 - mat1
+mat_diff
+
+##get numbers for number
+mat1 <- cellchat_merged@net[[1]][["count"]]
+
+# strength matrix for group 2
+mat2 <- cellchat_merged@net[[2]][["count"]]
+
+# their difference (group2 - group1)
+mat_diff <- mat2 - mat1
+mat_diff
+
+
+library(RColorBrewer)
+display.brewer.all()
+
